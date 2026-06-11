@@ -1,0 +1,17 @@
+{
+  "name": "ai-panel-studio",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AI Panel Studio — AI 圆桌讨论 Web App",
+  "scripts": {
+    "db:seed": "node scripts/seed-db.js",
+    "db:init": "node -e \"const fs=require('fs');const db=require('better-sqlite3')('data/dev.db');db.exec(fs.readFileSync('docs/database_schema.sql','utf-8'));db.close();console.log('数据库初始化完成')\""
+  },
+  "dependencies": {
+    "@faker-js/faker": "^10.4.0",
+    "better-sqlite3": "^12.10.0"
+  },
+  "allowScripts": {
+    "better-sqlite3@12.10.0": true
+  }
+}
