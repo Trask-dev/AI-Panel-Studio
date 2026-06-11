@@ -1,0 +1,76 @@
+/* =============================================================================
+ * AI Panel Studio — 组件样式
+ * =============================================================================
+ * Step 2: 仅包含区域占位标签样式，用于验证布局骨架。
+ * 后续 Step 3-10 将在此文件追加完整组件样式。
+ * ============================================================================= */
+
+/* =============================================================================
+ * ZONE 1 — AppHeader 占位 (金色虚线边框)
+ * ============================================================================= */
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--header-height);              /* 56px — 固定不压缩 */
+  padding: 0 var(--space-lg);
+  border-bottom: 2px dashed var(--gold);     /* 金色虚线 — 清晰标记 Header 边界 */
+  background: var(--bg-secondary);
+  flex-shrink: 0;
+}
+
+/* =============================================================================
+ * 区域标签通用样式 — 用于骨架验证
+ * ============================================================================= */
+.zone-label {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-weight: var(--font-medium);
+  color: var(--text-secondary);
+  letter-spacing: 0.04em;
+  user-select: none;
+  pointer-events: none;
+}
+
+/* =============================================================================
+ * ZONE 2 — StudioStage 占位 (金色光晕虚线边框)
+ * ============================================================================= */
+.studio-stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px dashed rgba(232, 168, 64, 0.4);  /* 金色虚线 — 舞台边界 */
+  background:
+    /* 模拟未来光晕的微妙渐变 */
+    radial-gradient(
+      ellipse at 50% 30%,
+      rgba(232, 168, 64, 0.04) 0%,
+      transparent 70%
+    ),
+    var(--bg-primary);
+}
+
+/* =============================================================================
+ * ZONE 3A — LiveTranscript 占位 (蓝色虚线边框)
+ * ============================================================================= */
+.live-transcript {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px dashed var(--color-expert-0);    /* 蓝色虚线 — 逐字稿边界 */
+  border-radius: var(--radius-md);
+  background: rgba(74, 144, 217, 0.03);        /* 微弱蓝色底色 */
+}
+
+/* =============================================================================
+ * ZONE 3B — AnalysisPanel 占位 (绿色虚线边框)
+ * ============================================================================= */
+.analysis-panel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px dashed var(--color-expert-2);    /* 绿色虚线 — 分析面板边界 */
+  border-radius: var(--radius-md);
+  background: rgba(80, 184, 108, 0.03);        /* 微弱绿色底色 */
+  border-left: 1px solid var(--border-default); /* 左分割线保留 */
+}

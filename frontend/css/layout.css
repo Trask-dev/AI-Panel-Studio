@@ -1,0 +1,99 @@
+/* =============================================================================
+ * AI Panel Studio — 顶层布局
+ * =============================================================================
+ *
+ * 布局层级（高度分配）:
+ *   .app (100vh, Flex col, overflow: hidden)
+ *   ├── .app-header         56px   (flex-shrink: 0, 固定高度)
+ *   └── .studio-view        剩余   (flex: 1, Flex col)
+ *       ├── .studio-stage   35%    (flex: 0 0 35%)
+ *       └── .studio-bottom  65%    (flex: 1, CSS Grid 双栏)
+ *           ├── .live-transcript   1fr (左栏, 自适应)
+ *           └── .analysis-panel   360px (右栏, 固定宽度)
+ *
+ * 关键约束:
+ *   - 整页 overflow: hidden → 无外层滚动条
+ *   - 子区域各自 overflow-y: auto → 日后内容溢出时独立滚动
+ *   - min-height: 0 → 允许 Flex 子元素收缩到内容以下
+ * ============================================================================= */
+
+/* ---- 应用容器: 全屏暗色底 + 超宽居中 ---- */
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  max-width: var(--content-max-width);       /* 超宽屏上限 1920px */
+  margin: 0 auto;                            /* 居中 */
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: 1.6;
+  overflow: hidden;                          /* 核心: 禁止整页滚动 */
+}
+
+/* ---- 演播厅主体: 占满 Header 之外的全部剩余空间 ---- */
+.studio-view {
+  flex: 1;                                   /* 占满剩余高度 */
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;                          /* 子区域各自 overflow */
+  min-height: 0;                             /* Flex 子元素允许收缩到内容以下 */
+}
+
+/* ---- 舞台区: 固定 35% ---- */
+.studio-stage {
+  flex: 0 0 35%;                             /* 不伸缩, 始终 35% */
+  position: relative;
+  overflow: hidden;                          /* 光晕背景不溢出 (Step 4) */
+  min-height: 0;
+}
+
+/* ---- 下半区: 65% + Grid 双栏 ---- */
+.studio-bottom {
+  flex: 1;                                   /* 占剩余 65% */
+  display: grid;
+  grid-template-columns: 1fr var(--analysis-width);  /* 左自适应 + 右固定 360px */
+  overflow: hidden;
+  min-height: 0;
+  gap: var(--space-md);
+  padding: 0 var(--space-lg) var(--space-lg);
+}
+
+/* ---- 逐字稿区 ---- */
+.live-transcript {
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* ---- 分析面板 ---- */
+.analysis-panel {
+  overflow: hidden;
+  min-height: 0;
+  border-left: 1px solid var(--border-default);
+}
+
+/* =============================================================================
+ * 响应式基础回退 (详细响应式在 responsive.css — Step 11)
+ * ============================================================================= */
+
+/* 超宽屏微调 (≥ 1920px): 增大间距 */
+@media (min-width: 1920px) {
+  .studio-bottom {
+    gap: var(--space-xl);
+    padding: 0 var(--space-2xl) var(--space-xl);
+  }
+}
+
+/* 窄屏回退 (≤ 1279px): Grid 降级为单列 */
+@media (max-width: 1279px) {
+  .studio-bottom {
+    grid-template-columns: 1fr;
+    gap: 0;
+    padding: 0 var(--space-md) var(--space-md);
+  }
+  .analysis-panel {
+    display: none;                           /* 平板默认隐藏，通过 JS 抽屉唤出 */
+    border-left: none;
+  }
+}

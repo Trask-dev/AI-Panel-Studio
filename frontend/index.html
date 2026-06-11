@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Panel Studio — 演播厅 · 布局骨架</title>
+
+  <!-- CSS 加载顺序：reset → tokens → layout → components → animations → responsive -->
+  <link rel="stylesheet" href="css/reset.css">
+  <link rel="stylesheet" href="css/tokens.css">
+  <link rel="stylesheet" href="css/layout.css">
+  <link rel="stylesheet" href="css/components.css">
+  <link rel="stylesheet" href="css/animations.css">
+  <link rel="stylesheet" href="css/responsive.css">
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+</head>
+<body>
+
+  <!-- ====================================================================
+       .app — 顶层容器 (100vh, Flex 纵向, overflow: hidden)
+       ==================================================================== -->
+  <div class="app">
+
+    <!-- ================================================================
+         ZONE 1 — .app-header (固定 56px)
+         后续 Step 3 填充具体内容
+         ================================================================ -->
+    <header class="app-header">
+      <span class="zone-label">HEADER · 56px · Step 3</span>
+    </header>
+
+    <!-- ================================================================
+         .studio-view — 剩余高度 (Flex: 1)
+         ================================================================ -->
+    <main class="studio-view">
+
+      <!-- ==============================================================
+           ZONE 2 — .studio-stage (35%)
+           后续 Step 4-5 填充主持人 + 嘉宾卡片
+           ============================================================== -->
+      <section class="studio-stage">
+        <span class="zone-label">STUDIO STAGE · 35% · Step 4-5</span>
+      </section>
+
+      <!-- ==============================================================
+           .studio-bottom — 65%, CSS Grid 双栏
+           ============================================================== -->
+      <div class="studio-bottom">
+
+        <!-- ZONE 3A — .live-transcript (1fr) · Step 6 -->
+        <section class="live-transcript">
+          <span class="zone-label">LIVE TRANSCRIPT · 1fr · Step 6</span>
+        </section>
+
+        <!-- ZONE 3B — .analysis-panel (360px) · Step 7 -->
+        <aside class="analysis-panel">
+          <span class="zone-label">ANALYSIS PANEL · 360px · Step 7</span>
+        </aside>
+
+      </div>
+
+    </main>
+
+  </div>
+
+</body>
+</html>
