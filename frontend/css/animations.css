@@ -1,15 +1,220 @@
 /* =============================================================================
- * AI Panel Studio — 动效系统
+ * AI Panel Studio — 动效系统 (Step 8)
  * =============================================================================
- * 本文件将在 Step 8 中填充 6 种纯 CSS 关键帧动画。
- * 当前为空占位，保证 HTML 引用的完整性。
+ * 6 种纯 CSS @keyframes 动画，零 JavaScript 依赖。
+ *
+ * 性能原则:
+ *   - 优先使用 transform + opacity（GPU 合成，不触发 reflow）
+ *   - 避免动画 width/height/margin/padding（触发 layout）
+ *   - 使用 will-change 提示浏览器优化（仅在实际动画的元素上）
  * ============================================================================= */
 
-/* Step 8 将添加:
- *   @keyframes pulse-border      — thinking 状态边框脉冲
- *   @keyframes glow-breathing    — speaking 状态光晕呼吸
- *   @keyframes fade-in-up        — 新消息淡入上移
- *   @keyframes slide-in-right    — 共识/分歧从右滑入
- *   @keyframes blink             — 流式光标闪烁
- *   @keyframes round-transition  — 轮次切换过渡
- */
+/* =============================================================================
+ * 1. pulse-border — thinking 状态边框脉冲
+ * =============================================================================
+ * 边框颜色在 1.5s 内从 guest-color → 透明 → guest-color 循环。
+ * 应用到 .guest-card--thinking。
+ * 使用 outline 而非 border 避免盒模型变化触发 reflow。
+ * ============================================================================= */
+@keyframes pulse-border {
+  0%, 100% {
+    border-color: var(--guest-color);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--guest-color) 30%, transparent);
+  }
+  50% {
+    border-color: color-mix(in srgb, var(--guest-color) 25%, transparent);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--guest-color) 0%, transparent);
+  }
+}
+
+/* =============================================================================
+ * 2. glow-breathing — speaking 状态光晕呼吸
+ * =============================================================================
+ * box-shadow 在 3s 内从 8px → 32px → 8px 循环，模拟呼吸感。
+ * 应用到 .guest-card--speaking。
+ * ============================================================================= */
+@keyframes glow-breathing {
+  0%, 100% {
+    box-shadow:
+      0 0 8px  color-mix(in srgb, var(--guest-color) 40%, transparent),
+      0 0 16px color-mix(in srgb, var(--guest-color) 15%, transparent);
+  }
+  50% {
+    box-shadow:
+      0 0 20px color-mix(in srgb, var(--guest-color) 60%, transparent),
+      0 0 48px color-mix(in srgb, var(--guest-color) 25%, transparent),
+      0 0 80px color-mix(in srgb, var(--guest-color) 8%, transparent);
+  }
+}
+
+/* =============================================================================
+ * 3. fade-in-up — 新消息淡入上移
+ * =============================================================================
+ * 新消息从下方 12px 淡入上移到原位，duration 350ms。
+ * 应用到 .transcript-entry--new (JS 动态添加 class)。
+ * ============================================================================= */
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* =============================================================================
+ * 4. slide-in-right — 共识/分歧从右滑入
+ * =============================================================================
+ * 卡片从右侧 24px 滑入到原位，duration 300ms ease-out。
+ * 应用到 .consensus-card--new 或 .divergence-card--new。
+ * ============================================================================= */
+@keyframes slide-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* =============================================================================
+ * 5. blink — 流式光标闪烁
+ * =============================================================================
+ * 光标 opacity 在 1s 内以 step-end 方式切换（无过渡，直接跳变）。
+ * 应用到 .streaming-cursor。
+ * ============================================================================= */
+@keyframes blink {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
+/* =============================================================================
+ * 6. round-transition — 轮次切换过渡
+ * =============================================================================
+ * 轮次数字先放大淡入 → 保持 → 缩小淡出，total 2s。
+ * 应用到 .round-transition-overlay（轮次切换时 JS 动态显示）。
+ * ============================================================================= */
+@keyframes round-transition {
+  0% {
+    opacity: 0;
+    transform: scale(0.85);
+  }
+  15% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+  25% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  75% {
+    opacity: 0.9;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+}
+
+/* =============================================================================
+ * 补充: pulse-text — 流式标签文字呼吸
+ * =============================================================================
+ * 用于 .streaming-badge 的 "正在发言" 标签文字脉冲。
+ * 已在 components.css 中引用。
+ * ============================================================================= */
+@keyframes pulse-text {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+/* =============================================================================
+ * 动画应用规则 — 将 @keyframes 绑定到对应元素
+ * ============================================================================= */
+
+/* thinking 卡片: 边框脉冲, 1.5s 循环, 无限 */
+.guest-card--thinking {
+  animation: pulse-border 1.5s ease-in-out infinite;
+}
+
+/* speaking 卡片: 光晕呼吸, 3s 循环, 无限 (叠加静态 box-shadow) */
+.guest-card--speaking {
+  animation: glow-breathing 3s ease-in-out infinite;
+}
+
+/* 流式光标: 1s step-end 闪烁, 无限 */
+.streaming-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1.1em;
+  background: var(--text-primary);
+  vertical-align: text-bottom;
+  margin-left: 1px;
+  animation: blink 1s step-end infinite;
+}
+
+/* 流式标签: 文字呼吸, 1.5s 循环 */
+.streaming-badge {
+  animation: pulse-text 1.5s ease-in-out infinite;
+}
+
+/* =============================================================================
+ * 动画工具类 — 供 JS 动态添加
+ * ============================================================================= */
+
+/* 新消息进入 (JS: entry.classList.add('animate-fade-in-up')) */
+.animate-fade-in-up {
+  animation: fade-in-up 350ms ease-out both;
+}
+
+/* 共识/分歧更新 (JS: card.classList.add('animate-slide-in-right')) */
+.animate-slide-in-right {
+  animation: slide-in-right 300ms ease-out both;
+}
+
+/* 轮次切换叠加层 */
+.round-transition-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: var(--z-modal);
+}
+
+.round-transition-overlay__text {
+  font-family: var(--font-mono);
+  font-size: var(--text-3xl);
+  font-weight: var(--font-bold);
+  color: var(--gold);
+  text-shadow: 0 0 40px rgba(232, 168, 64, 0.5);
+  animation: round-transition 2s ease-out both;
+}
+
+/* =============================================================================
+ * 性能提示 (will-change)
+ * =============================================================================
+ * 以下元素预期频繁动画，提前告知浏览器创建独立合成层。
+ * 谨慎使用 will-change — 仅在确实频繁动画的元素上开启。
+ * ============================================================================= */
+.guest-card--speaking,
+.guest-card--thinking {
+  will-change: box-shadow, border-color;
+}
+
+.streaming-cursor {
+  will-change: opacity;
+}

@@ -1,11 +1,386 @@
 /* =============================================================================
- * AI Panel Studio — 响应式布局
+ * AI Panel Studio — 响应式布局 (Step 11)
  * =============================================================================
- * 本文件将在 Step 11 中填充平板/手机端断点的完整样式。
- * 当前为空占位，保证 HTML 引用的完整性。
+ *
+ * 断点策略 (Desktop-First):
+ *   ≥ 1920px          超宽屏 — 内容居中, max-width 约束
+ *   1280px ~ 1919px   标准桌面 — 完整三区布局 (默认, 无需 @media)
+ *   768px ~ 1279px    平板横屏 — 下半区单列, Analysis 变抽屉
+ *   < 768px           手机竖屏 — Stage 横向 Snap Scroll, Analysis Bottom Sheet
+ *
+ * 核心原则: 每个区域独立滚动, 整页不出现外层滚动条。
  * ============================================================================= */
 
-/* Step 11 将添加:
- *   @media (max-width: 1279px) { ... }   — 平板端
- *   @media (max-width: 767px)  { ... }   — 手机端
- */
+/* =============================================================================
+ * 超宽屏 (≥ 1920px)
+ * =============================================================================
+ * max-width 已在 layout.css 的 .app 上设置, 此处调整内部间距与字号。
+ * ============================================================================= */
+@media (min-width: 1920px) {
+  /* 舞台区增大间距 */
+  .studio-stage {
+    padding: var(--space-2xl) var(--space-3xl);
+  }
+
+  .stage-experts-row {
+    gap: var(--space-2xl);                 /* 卡片间距更舒展 */
+  }
+
+  /* 下半区增大 padding 和 gap */
+  .studio-bottom {
+    gap: var(--space-xl);
+    padding: 0 var(--space-2xl) var(--space-xl);
+  }
+
+  /* GuestCard 略大 */
+  .guest-card--host {
+    min-width: 220px;
+  }
+
+  .guest-card--expert {
+    min-width: 180px;
+  }
+
+  /* 讨论列表网格到 5 列 */
+  .discussion-grid {
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: var(--space-xl);
+    padding: var(--space-3xl);
+  }
+}
+
+/* =============================================================================
+ * 平板横屏 / 窄桌面 (768px ~ 1279px)
+ * =============================================================================
+ * 关键变化:
+ *   1. 下半区 Grid 降级为单列
+ *   2. Analysis 面板默认隐藏, 通过 .analysis-panel--visible 类变为固定抽屉
+ *   3. 舞台区占比缩小, 给 Transcript 更多空间
+ *   4. GuestCard 尺寸压缩
+ * ============================================================================= */
+@media (max-width: 1279px) {
+  /* ---- 舞台区缩小 ---- */
+  .studio-stage {
+    flex: 0 0 28%;                         /* 从 35% 缩小到 28% */
+    padding: var(--space-md);
+    gap: var(--space-md);
+  }
+
+  .stage-experts-row {
+    gap: var(--space-md);
+  }
+
+  /* GuestCard 尺寸压缩 */
+  .guest-card {
+    min-width: 130px;
+    padding: var(--space-md);
+  }
+
+  .guest-card--host {
+    min-width: 160px;
+    padding: var(--space-lg);
+  }
+
+  .guest-avatar {
+    width: 44px;
+    height: 44px;
+    font-size: var(--text-base);
+  }
+
+  .guest-name {
+    font-size: var(--text-sm);
+  }
+
+  .guest-title {
+    font-size: 0.65rem;
+  }
+
+  /* 思考气泡缩小 */
+  .thinking-bubble {
+    width: 180px;
+    font-size: 0.65rem;
+  }
+
+  /* ---- 下半区: 单列 ---- */
+  .studio-bottom {
+    grid-template-columns: 1fr;            /* Analysis 隐藏, Transcript 占满 */
+    gap: 0;
+    padding: 0 var(--space-md) var(--space-md);
+  }
+
+  /* Transcript 占满 */
+  .live-transcript {
+    border-radius: 0;
+  }
+
+  /* Analysis: 默认隐藏, 变为从右滑出的固定抽屉 */
+  .analysis-panel {
+    display: none;
+    border-left: none;
+    border-radius: 0;
+  }
+
+  /* 抽屉可见态 (JS 添加 class) */
+  .analysis-panel--visible {
+    display: flex;
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 360px;
+    max-width: 90vw;
+    z-index: var(--z-panel);
+    border-left: 1px solid var(--border-default);
+    box-shadow: -8px 0 32px rgba(0, 0, 0, 0.6);
+  }
+
+  /* ---- Header 紧凑 ---- */
+  .app-header {
+    padding: 0 var(--space-md);
+  }
+
+  .discussion-topic {
+    max-width: 200px;
+    font-size: var(--text-base);
+  }
+
+  .app-logo__text {
+    font-size: var(--text-base);
+  }
+
+  /* ---- 弹窗适配 ---- */
+  .summary-modal {
+    max-width: 560px;
+    max-height: 88vh;
+  }
+
+  /* ---- 讨论列表: 减少列数 ---- */
+  .discussion-grid {
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    padding: var(--space-lg);
+    gap: var(--space-md);
+  }
+}
+
+/* =============================================================================
+ * 手机竖屏 (< 768px)
+ * =============================================================================
+ * 关键变化:
+ *   1. Stage 区专家卡片变为横向 Snap Scroll (不再换行)
+ *   2. Analysis 面板变为底部 Bottom Sheet (上拉层)
+ *   3. Header 紧凑为两行或隐藏部分元素
+ *   4. Transcript 占满剩余空间
+ *   5. GuestCard 进一步缩小
+ * ============================================================================= */
+@media (max-width: 767px) {
+  /* ---- 全局 ---- */
+  .app {
+    max-width: 100%;
+  }
+
+  /* ---- Header 紧凑 ---- */
+  .app-header {
+    height: 48px;
+    padding: 0 var(--space-sm);
+    gap: var(--space-sm);
+  }
+
+  .app-header__center {
+    flex: 1;
+    justify-content: flex-start;
+    gap: var(--space-sm);
+    overflow: hidden;
+  }
+
+  .discussion-topic {
+    max-width: 140px;
+    font-size: var(--text-sm);
+  }
+
+  .app-logo__text {
+    display: none;                         /* 手机端只显示图标 */
+  }
+
+  .round-indicator {
+    font-size: var(--text-xs);
+  }
+
+  .btn--secondary {
+    display: none;                         /* 次要按钮隐藏 */
+  }
+
+  .btn {
+    padding: 4px 10px;
+    font-size: var(--text-xs);
+  }
+
+  /* ---- 舞台区: 横向 Snap Scroll ---- */
+  .studio-stage {
+    flex: 0 0 auto;                        /* 高度由内容决定 */
+    padding: var(--space-md) var(--space-sm);
+    gap: var(--space-md);
+  }
+
+  /* 舞台光晕缩小 */
+  .stage-lighting {
+    width: 100%;
+    height: 100%;
+  }
+
+  /* 主持人 */
+  .stage-host-area {
+    width: 100%;
+    display: flex;
+    justify-content: center;
+  }
+
+  /* ★ 专家行: 横向滚动 + Snap Scroll */
+  .stage-experts-row {
+    flex-wrap: nowrap;                     /* 不换行 */
+    overflow-x: auto;                      /* 横向滚动 */
+    scroll-snap-type: x mandatory;         /* Snap 吸附 */
+    -webkit-overflow-scrolling: touch;     /* iOS 平滑滚动 */
+    gap: var(--space-md);
+    padding-bottom: var(--space-sm);
+    width: 100%;
+    justify-content: flex-start;           /* 从左侧开始 */
+    /* 隐藏滚动条 (Webkit) */
+  }
+
+  .stage-experts-row::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* 滚动边界留白 */
+  .stage-experts-row::after {
+    content: "";
+    flex-shrink: 0;
+    width: var(--space-sm);
+  }
+
+  /* 每个 GuestCard 吸附到中心 */
+  .guest-card {
+    scroll-snap-align: center;
+    min-width: 140px;
+    flex-shrink: 0;                        /* 不压缩 */
+  }
+
+  .guest-card--host {
+    scroll-snap-align: center;
+    min-width: 160px;
+    flex-shrink: 0;
+  }
+
+  /* ---- 下半区: 单列, Transcript 占满 ---- */
+  .studio-bottom {
+    grid-template-columns: 1fr;
+    gap: 0;
+    padding: 0;
+  }
+
+  /* ---- Analysis: Bottom Sheet (底部上拉层) ---- */
+  .analysis-panel {
+    display: none;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    max-height: 45vh;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    border-left: none;
+    border-top: 1px solid var(--border-active);
+    z-index: var(--z-panel);
+    box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.6);
+  }
+
+  /* Bottom Sheet 可见态 (JS 添加 class) */
+  .analysis-panel--visible {
+    display: flex;
+  }
+
+  /* Bottom Sheet 拖拽手柄 (装饰) */
+  .analysis-panel::before {
+    content: "";
+    display: block;
+    width: 40px;
+    height: 4px;
+    margin: var(--space-sm) auto;
+    background: var(--border-active);
+    border-radius: var(--radius-full);
+    flex-shrink: 0;
+  }
+
+  /* ---- Transcript ---- */
+  .live-transcript {
+    border-radius: 0;
+  }
+
+  .transcript-header {
+    padding: var(--space-sm) var(--space-md);
+  }
+
+  /* ---- 弹窗全屏 ---- */
+  .summary-modal-overlay {
+    padding: 0;
+    align-items: flex-end;                 /* 从底部弹出 */
+  }
+
+  .summary-modal {
+    max-width: 100%;
+    max-height: 90vh;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  }
+
+  /* ---- 讨论列表 ---- */
+  .discussion-grid {
+    grid-template-columns: 1fr;            /* 单列 */
+    padding: var(--space-md);
+    gap: var(--space-md);
+  }
+
+  .discussion-card__desc {
+    -webkit-line-clamp: 1;                 /* 摘要缩减为单行 */
+  }
+
+  /* ---- 回到底部按钮缩小 ---- */
+  .scroll-to-bottom {
+    bottom: var(--space-md);
+    right: var(--space-md);
+    padding: 6px 12px;
+  }
+
+  .scroll-to-bottom__badge {
+    min-width: 16px;
+    height: 16px;
+    font-size: 0.6rem;
+  }
+}
+
+/* =============================================================================
+ * 极小屏 (< 400px) — 额外微调
+ * ============================================================================= */
+@media (max-width: 399px) {
+  .guest-card {
+    min-width: 120px;
+    padding: var(--space-sm);
+  }
+
+  .guest-card--host {
+    min-width: 140px;
+    padding: var(--space-md);
+  }
+
+  .guest-avatar {
+    width: 36px;
+    height: 36px;
+    font-size: var(--text-sm);
+  }
+
+  .guest-name {
+    font-size: var(--text-xs);
+  }
+
+  .thinking-bubble {
+    width: 150px;
+  }
+}
