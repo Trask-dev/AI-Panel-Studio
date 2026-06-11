@@ -11,12 +11,12 @@ You are operating under the "Superpowers" engineering framework for this project
 - For API: Define Interface/Types first.
 - Ask for approval on the design before implementation.
 
-### Phase 2: DDD (Design Driven Development) - CURRENT PHASE
+### Phase 2: DDD (Design Driven Development)
 - Focus on clean architecture and separation of concerns.
 - Use TypeScript interfaces to enforce contracts.
 - Ensure UI components are decoupled from business logic.
 
-### Phase 3: TDD (Test Driven Development)
+### Phase 3: TDD (Test Driven Development) - CURRENT PHASE
 - Write tests BEFORE or ALONGSIDE implementation.
 - Use Vitest/Jest for unit tests.
 - Ensure high coverage for core logic (AI generation, consensus algorithms).
