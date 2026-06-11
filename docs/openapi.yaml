@@ -1,0 +1,1556 @@
+openapi: "3.0.3"
+info:
+  title: AI Panel Studio API
+  description: |
+    AI Panel Studio — AI 圆桌讨论 Web App 后端 API。
+
+    ## 核心概念
+    - **Discussion**: 一次完整的圆桌讨论会话
+    - **Guest**: 讨论参与者（1 位主持人 + 2~8 位专家）
+    - **TranscriptEntry**: 公开发言记录
+    - **ThinkingSnapshot**: 嘉宾实时思考状态（`hidden_cot` 绝不暴露）
+    - **ConsensusItem / DivergenceItem**: 实时共识与分歧
+    - **DiscussionSummary**: 讨论结束后的总结
+
+    ## 实时通信
+    实时数据通过 SSE (Server-Sent Events) 推送，统一端点：
+    `GET /api/v1/discussions/{discussion_id}/events`
+
+    ## 分页
+    列表接口使用游标分页（cursor-based pagination），
+    游标为 `sequence_number`，配合 `limit` 参数使用。
+
+    ## 认证
+    MVP 阶段无用户认证。API Key 仅在后端使用，不暴露到前端。
+  version: "1.0.0"
+  contact:
+    name: AI Panel Studio Team
+
+servers:
+  - url: http://localhost:8000/api/v1
+    description: 本地开发服务器
+
+tags:
+  - name: Discussions
+    description: 讨论会话管理
+  - name: Guests
+    description: 嘉宾管理 & 状态查询
+  - name: Messages
+    description: 发言记录（Transcript）
+  - name: Streaming
+    description: SSE 实时事件流
+  - name: Consensus
+    description: 共识与分歧
+
+# =============================================================================
+# Paths
+# =============================================================================
+paths:
+
+  # ===========================================================================
+  # Discussions
+  # ===========================================================================
+  /discussions:
+    get:
+      tags: [Discussions]
+      summary: 获取讨论列表
+      description: |
+        返回所有讨论会话的列表，支持按状态过滤。
+        按 `created_at` 降序排列。
+      operationId: listDiscussions
+      parameters:
+        - name: status
+          in: query
+          description: 按状态过滤
+          required: false
+          schema:
+            $ref: "#/components/schemas/DiscussionStatus"
+        - name: limit
+          in: query
+          description: 每页数量（默认 20，最大 100）
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: cursor
+          in: query
+          description: 分页游标（上一页最后一条的 `created_at`）
+          required: false
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: 讨论列表
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DiscussionListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+    post:
+      tags: [Discussions]
+      summary: 创建新讨论
+      description: |
+        创建一个新的讨论会话。
+        状态初始为 `setup`，需要后续调用嘉宾生成接口填充阵容。
+      operationId: createDiscussion
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DiscussionCreateRequest"
+      responses:
+        "201":
+          description: 讨论创建成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Discussion"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /discussions/{discussion_id}:
+    get:
+      tags: [Discussions]
+      summary: 获取讨论详情
+      description: 返回讨论详情，包含嘉宾阵容列表。
+      operationId: getDiscussion
+      parameters:
+        - $ref: "#/components/parameters/DiscussionId"
+      responses:
+        "200":
+          description: 讨论详情
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DiscussionDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+    patch:
+      tags: [Discussions]
+      summary: 更新讨论配置
+      description: |
+        更新讨论的配置项。
+        仅在 `status=setup` 时可修改核心参数。
+      operationId: updateDiscussion
+      parameters:
+        - $ref: "#/components/parameters/DiscussionId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DiscussionUpdateRequest"
+      responses:
+        "200":
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Discussion"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: 状态冲突 — 当前状态不允许修改
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    delete:
+      tags: [Discussions]
+      summary: 删除讨论（软删除）
+      description: |
+        将讨论的 `status` 设为 `finished` 或标记为已删除。
+        关联的所有嘉宾、发言、共识/分歧数据级联删除（CASCADE）。
+      operationId: deleteDiscussion
+      parameters:
+        - $ref: "#/components/parameters/DiscussionId"
+      responses:
+        "204":
+          description: 删除成功
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ===========================================================================
+  # Discussion Actions
+  # ===========================================================================
+  /discussions/{discussion_id}/start:
+    post:
+      tags: [Discussions]
+      summary: 开始讨论
+      description: |
+        将讨论状态从 `setup` 转为 `active`。
+        必须已完成嘉宾生成和用户确认。
+        启动后端 Orchestrator 协程推进讨论。
+      operationId: startDiscussion
+      parameters:
+        - $ref: "#/components/parameters/DiscussionId"
+      responses:
+        "200":
+          description: 讨论已开始
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Discussion"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          description: 状态冲突 — 当前状态不是 setup 或嘉宾阵容未就绪
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /discussions/{discussion_id}/end:
+    post:
+      tags: [Discussions]
+      summary: 结束讨论并触发总结
+      description: |
+        将讨论状态从 `active` 转为 `summarizing`，
+        触发主持人 LLM 生成总结。
+        总结完成后状态自动变为 `finished`。
+      operationId: endDiscussion
+      parameters:
+        - $ref: "#/components/parameters/DiscussionId"
+      responses:
+        "202":
+          description: 总结生成已触发（异步处理）
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  discussion_id:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+                    enum: [summarizing]
+                  message:
+                    type: string
+                    example: "总结生成已启动，请监听 SSE 获取完成通知"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          description: 状态冲突 — 当前状态不是 active
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # ===========================================================================
+  # Guests
+  # ===========================================================================
+  /discussions/{discussion_id}/guests/generate:
+    post:
+      tags: [Guests]
+      summary: LLM 生成嘉宾阵容
+      description: |
+        调用 LLM 根据话题和专家人数生成主持人和专家阵容。
+        返回的嘉宾列表供用户确认，确认后调用 start 开始讨论。
+
+        每位嘉宾包含：姓名、职业/Title、立场、专属颜色、人格提示词。
+        主持人颜色固定为暖金色调（#E8A840），专家使用差异化鲜明色调。
+      operationId: generateGuests
+      parameters:
+        - $ref: "#/components/parameters/DiscussionId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                regenerate:
+                  type: boolean
+                  default: false
+                  description: 是否重新生成（覆盖已有嘉宾）
+                language:
+                  type: string
+                  default: "zh-CN"
+                  description: 嘉宾姓名/头衔的语言
+              example:
+                regenerate: false
+                language: "zh-CN"
+      responses:
+        "200":
+          description: 嘉宾阵容
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GuestListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "502":
+          description: LLM 调用失败
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /discussions/{discussion_id}/guests:
+    get:
+      tags: [Guests]
+      summary: 获取嘉宾列表
+      description: 返回讨论的所有嘉宾（按 `speech_order` 排序）。
+      operationId: listGuests
+      parameters:
+        - $ref: "#/components/parameters/DiscussionId"
+      responses:
+        "200":
+          description: 嘉宾列表
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GuestListResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /discussions/{discussion_id}/guests/{guest_id}/snapshot:
+    get:
+      tags: [Guests]
+      summary: 获取嘉宾最新思考快照
+      description: |
+        返回指定嘉宾的最新 ThinkingSnapshot（不含 `hidden_cot`）。
+        用于前端嘉宾小窗轮询或初始加载。
+
+        ⚠️ 此端点仅返回公开字段。`hidden_cot` 在任何 API 响应中都不存在。
+      operationId: getGuestSnapshot
+      parameters:
+        - $ref: "#/components/parameters/DiscussionId"
+        - $ref: "#/components/parameters/GuestId"
+      responses:
+        "200":
+          description: 最新思考快照
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ThinkingSnapshotPublic"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ===========================================================================
+  # Messages (Transcript)
+  # ===========================================================================
+  /discussions/{discussion_id}/messages:
+    get:
+      tags: [Messages]
+      summary: 获取发言记录（游标分页）
+      description: |
+        按 `sequence_number` 升序返回讨论的发言记录。
+
+        **分页方式：游标分页 (Cursor-based Pagination)**
+        - 首次请求：不传 `cursor`，获取前 N 条
+        - 后续请求：传入上次返回的 `next_cursor` 作为 `cursor`
+        - 通过 `has_more` 判断是否还有更多数据
+
+        **流式场景下的前端轮询策略：**
+        - 传 `cursor=0` 或 `wait=true` 长轮询等待新消息
+        - 建议配合 SSE 使用以获得实时推送
+      operationId: listMessages
+      parameters:
+        - $ref: "#/components/parameters/DiscussionId"
+        - name: cursor
+          in: query
+          description: |
+            分页游标（上一页最后一条的 `sequence_number`）。
+            不传则从头开始。
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+        - name: limit
+          in: query
+          description: 每页数量（默认 50，最大 200）
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+        - name: entry_type
+          in: query
+          description: 按类型过滤（多个用逗号分隔）
+          required: false
+          schema:
+            type: string
+            example: "speech,rebuttal"
+        - name: guest_id
+          in: query
+          description: 按嘉宾过滤
+          required: false
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: 发言记录列表
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageListResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ===========================================================================
+  # Streaming (SSE)
+  # ===========================================================================
+  /discussions/{discussion_id}/events:
+    get:
+      tags: [Streaming]
+      summary: SSE 实时事件流
+      description: |
+        统一的 Server-Sent Events 端点，推送讨论的所有实时数据。
+
+        **连接方式：**
+        ```
+        const es = new EventSource('/api/v1/discussions/{discussion_id}/events');
+        es.addEventListener('message', (e) => {
+          const event = JSON.parse(e.data);
+          // 根据 event.type 路由到不同处理逻辑
+        });
+        ```
+
+        **SSE 协议说明：**
+        - 每行格式：`data: <JSON>\n\n`
+        - 服务端每 15 秒发送 `:keepalive` 注释防止连接超时
+        - 断线后 `EventSource` 自动重连
+        - 重连时前端应拉取 `/messages` 补全断线期间的遗漏
+
+        **事件类型 (`event.type`)：**
+
+        | type | 触发时机 | payload schema |
+        |------|---------|----------------|
+        | `guest_status_change` | 嘉宾状态变化 | `GuestStatusChangeEvent` |
+        | `snapshot_update` | 嘉宾思考更新 | `SnapshotUpdateEvent` |
+        | `transcript_delta` | 流式发言增量 | `TranscriptDeltaEvent` |
+        | `transcript_append` | 发言完成 | `TranscriptAppendEvent` |
+        | `consensus_update` | 共识变化 | `ConsensusUpdateEvent` |
+        | `divergence_update` | 分歧变化 | `DivergenceUpdateEvent` |
+        | `round_advance` | 轮次推进 | `RoundAdvanceEvent` |
+        | `discussion_status_change` | 讨论状态变化 | `DiscussionStatusChangeEvent` |
+        | `error` | 后端错误 | `ErrorEvent` |
+        | `heartbeat` | 每 15s | `HeartbeatEvent` |
+      operationId: streamEvents
+      parameters:
+        - $ref: "#/components/parameters/DiscussionId"
+        - name: after_sequence
+          in: query
+          description: 只接收此序号之后的事件（用于断线重连）
+          required: false
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: SSE 事件流（text/event-stream）
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: |
+                  流式 JSON 事件序列。每行一个完整的 JSON 对象。
+
+                  示例：
+                  ```
+                  data: {"type":"snapshot_update","payload":{"guest_id":"...","status":"thinking","public_thought":"正在组织论点...","confidence":0.85,"intent":"raise_hand"}}
+
+                  data: {"type":"transcript_delta","payload":{"entry_id":"...","guest_id":"...","content":"我认为","is_final":false}}
+
+                  data: {"type":"transcript_delta","payload":{"entry_id":"...","guest_id":"...","content":"AI的发展","is_final":false}}
+
+                  data: {"type":"transcript_append","payload":{"entry_id":"...","guest_id":"...","content":"AI的发展将对就业市场产生深远影响","is_final":true,"sequence_number":5,"guest_name":"李芳","guest_color":"#4A90D9","entry_type":"speech"}}
+
+                  data: {"type":"consensus_update","payload":{"items":[...]}}
+
+                  data: {"type":"discussion_status_change","payload":{"status":"summarizing"}}
+                  ```
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ===========================================================================
+  # Consensus & Divergence
+  # ===========================================================================
+  /discussions/{discussion_id}/consensus:
+    get:
+      tags: [Consensus]
+      summary: 获取共识项列表
+      description: 返回讨论的活跃共识项，按 `first_identified_at` 升序。
+      operationId: listConsensus
+      parameters:
+        - $ref: "#/components/parameters/DiscussionId"
+        - name: include_inactive
+          in: query
+          description: 是否包含已失效的共识（默认仅活跃）
+          required: false
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: 共识项列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ConsensusItem"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /discussions/{discussion_id}/divergences:
+    get:
+      tags: [Consensus]
+      summary: 获取分歧项列表
+      description: 返回讨论的活跃分歧项，按 `first_identified_at` 升序。
+      operationId: listDivergences
+      parameters:
+        - $ref: "#/components/parameters/DiscussionId"
+        - name: include_resolved
+          in: query
+          description: 是否包含已化解的分歧（默认仅活跃）
+          required: false
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: 分歧项列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/DivergenceItem"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ===========================================================================
+  # Summary
+  # ===========================================================================
+  /discussions/{discussion_id}/summary:
+    get:
+      tags: [Discussions]
+      summary: 获取讨论总结
+      description: |
+        返回讨论结束后生成的总结。
+        仅当 `status=finished` 时有数据。
+      operationId: getSummary
+      parameters:
+        - $ref: "#/components/parameters/DiscussionId"
+      responses:
+        "200":
+          description: 讨论总结
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DiscussionSummary"
+        "404":
+          description: 总结不存在或讨论尚未结束
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+
+# =============================================================================
+# Components — Parameters
+# =============================================================================
+components:
+  parameters:
+    DiscussionId:
+      name: discussion_id
+      in: path
+      required: true
+      description: 讨论会话 UUID
+      schema:
+        type: string
+        format: uuid
+        example: "550e8400-e29b-41d4-a716-446655440000"
+
+    GuestId:
+      name: guest_id
+      in: path
+      required: true
+      description: 嘉宾 UUID
+      schema:
+        type: string
+        format: uuid
+        example: "660e8400-e29b-41d4-a716-446655440001"
+
+  # ===========================================================================
+  # Components — Responses
+  # ===========================================================================
+  responses:
+    BadRequest:
+      description: 请求参数错误
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: "BAD_REQUEST"
+              message: "参数 'topic' 为必填项"
+
+    NotFound:
+      description: 资源不存在
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: "NOT_FOUND"
+              message: "讨论会话不存在"
+
+    ValidationError:
+      description: 请求体验证失败
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: "VALIDATION_ERROR"
+              message: "请求体验证失败"
+              details:
+                - field: "expert_count"
+                  reason: "必须介于 2 和 8 之间"
+
+  # ===========================================================================
+  # Components — Schemas
+  # ===========================================================================
+  schemas:
+
+    # -------------------------------------------------------------------------
+    # Enums
+    # -------------------------------------------------------------------------
+    DiscussionStatus:
+      type: string
+      enum: [setup, active, summarizing, finished]
+      description: |
+        讨论生命周期状态：
+        - `setup`: 配置中（可编辑话题、生成嘉宾）
+        - `active`: 讨论进行中
+        - `summarizing`: 正在生成总结
+        - `finished`: 已结束
+
+    GuestRole:
+      type: string
+      enum: [host, expert]
+      description: 嘉宾角色
+
+    GuestStatus:
+      type: string
+      enum: [idle, thinking, speaking, waiting]
+      description: |
+        嘉宾行为状态：
+        - `idle`: 待机/聆听
+        - `thinking`: 正在思考/准备发言
+        - `speaking`: 正在发言
+        - `waiting`: 发言后等待回应
+
+    HostStyle:
+      type: string
+      enum: [neutral, provocative, socratic, humorous]
+      description: 主持风格
+
+    InterjectionMode:
+      type: string
+      enum: [moderated, free, hybrid]
+      description: |
+        插话模式：
+        - `moderated`: 主持人控制发言顺序
+        - `free`: 专家自由插话
+        - `hybrid`: 混合模式
+
+    EntryType:
+      type: string
+      enum:
+        - opening_statement
+        - position_statement
+        - speech
+        - interjection
+        - rebuttal
+        - supplement
+        - question
+        - answer
+        - closing_statement
+        - host_summary
+      description: 发言类型
+
+    Intent:
+      type: string
+      enum: [raise_hand, rebut, supplement, answer, concede, stay_silent]
+      description: 发言意图
+
+    Severity:
+      type: string
+      enum: [mild, moderate, sharp, fundamental]
+      description: 分歧程度
+
+    # -------------------------------------------------------------------------
+    # Discussion
+    # -------------------------------------------------------------------------
+    DiscussionCreateRequest:
+      type: object
+      required: [topic, expert_count, llm_model]
+      properties:
+        topic:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: 讨论话题
+          example: "AI会取代人类工作吗"
+        topic_description:
+          type: string
+          nullable: true
+          maxLength: 2000
+          description: 话题补充背景
+          example: "探讨AI对未来10年就业市场的深远影响"
+        expert_count:
+          type: integer
+          minimum: 2
+          maximum: 8
+          default: 4
+          description: 专家人数（不含主持人）
+        host_style:
+          $ref: "#/components/schemas/HostStyle"
+        max_rounds:
+          type: integer
+          nullable: true
+          minimum: 1
+          maximum: 50
+          description: 最大轮次上限（null=无限制）
+        llm_model:
+          type: string
+          description: LLM 模型标识
+          example: "claude-sonnet-4-20250514"
+        llm_config:
+          type: object
+          description: LLM 调用参数
+          properties:
+            temperature:
+              type: number
+              minimum: 0.0
+              maximum: 1.0
+              default: 0.7
+            max_tokens:
+              type: integer
+              minimum: 256
+              maximum: 8192
+              default: 2048
+        interjection_mode:
+          $ref: "#/components/schemas/InterjectionMode"
+
+    DiscussionUpdateRequest:
+      type: object
+      description: 仅可更新可编辑字段（setup 状态下可修改核心参数）
+      properties:
+        topic:
+          type: string
+          minLength: 1
+          maxLength: 200
+        topic_description:
+          type: string
+          nullable: true
+          maxLength: 2000
+        host_style:
+          $ref: "#/components/schemas/HostStyle"
+        max_rounds:
+          type: integer
+          nullable: true
+          minimum: 1
+          maximum: 50
+        llm_config:
+          type: object
+        interjection_mode:
+          $ref: "#/components/schemas/InterjectionMode"
+
+    Discussion:
+      type: object
+      required:
+        - id
+        - topic
+        - host_style
+        - expert_count
+        - status
+        - round_count
+        - llm_model
+        - llm_config
+        - interjection_mode
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        topic:
+          type: string
+        topic_description:
+          type: string
+          nullable: true
+        host_style:
+          $ref: "#/components/schemas/HostStyle"
+        expert_count:
+          type: integer
+        status:
+          $ref: "#/components/schemas/DiscussionStatus"
+        round_count:
+          type: integer
+        max_rounds:
+          type: integer
+          nullable: true
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+        llm_model:
+          type: string
+        llm_config:
+          type: object
+        interjection_mode:
+          $ref: "#/components/schemas/InterjectionMode"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    DiscussionListResponse:
+      type: object
+      required: [items, has_more]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/DiscussionSummary"
+        has_more:
+          type: boolean
+          description: 是否有更多数据
+        next_cursor:
+          type: string
+          format: date-time
+          nullable: true
+          description: 下一页游标
+
+    DiscussionSummary:
+      type: object
+      description: 讨论列表项（精简版，不含完整配置）
+      required: [id, topic, status, expert_count, round_count, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        topic:
+          type: string
+        status:
+          $ref: "#/components/schemas/DiscussionStatus"
+        expert_count:
+          type: integer
+        round_count:
+          type: integer
+        host_name:
+          type: string
+          nullable: true
+          description: 主持人姓名
+        total_entries:
+          type: integer
+          description: 发言总数
+        active_consensus_count:
+          type: integer
+        active_divergence_count:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+
+    DiscussionDetail:
+      type: object
+      description: 讨论详情（含嘉宾列表）
+      required: [discussion, guests]
+      properties:
+        discussion:
+          $ref: "#/components/schemas/Discussion"
+        guests:
+          type: array
+          items:
+            $ref: "#/components/schemas/Guest"
+        summary:
+          $ref: "#/components/schemas/DiscussionSummary"
+          description: 仅在 finished 状态时存在
+
+    # -------------------------------------------------------------------------
+    # Guest
+    # -------------------------------------------------------------------------
+    Guest:
+      type: object
+      required:
+        - id
+        - discussion_id
+        - role
+        - name
+        - stance
+        - color
+        - status
+        - speech_order
+        - is_active
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        discussion_id:
+          type: string
+          format: uuid
+        role:
+          $ref: "#/components/schemas/GuestRole"
+        name:
+          type: string
+          example: "李芳"
+        title:
+          type: string
+          nullable: true
+          example: "AI 研究员"
+        bio:
+          type: string
+          nullable: true
+          description: 简短背景介绍
+        stance:
+          type: string
+          example: "AI技术乐观主义，认为AI将创造更多高质量就业"
+        stance_label:
+          type: string
+          nullable: true
+          example: "正方"
+        color:
+          type: string
+          pattern: "^#[0-9A-Fa-f]{6}$"
+          example: "#4A90D9"
+        avatar_url:
+          type: string
+          format: uri
+          nullable: true
+        status:
+          $ref: "#/components/schemas/GuestStatus"
+        speech_order:
+          type: integer
+        is_active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+
+    GuestListResponse:
+      type: object
+      required: [discussion_id, guests]
+      properties:
+        discussion_id:
+          type: string
+          format: uuid
+        guests:
+          type: array
+          items:
+            $ref: "#/components/schemas/Guest"
+        generated_at:
+          type: string
+          format: date-time
+          description: 阵容生成时间
+
+    # -------------------------------------------------------------------------
+    # ThinkingSnapshot (Public — 不含 hidden_cot)
+    # -------------------------------------------------------------------------
+    ThinkingSnapshotPublic:
+      type: object
+      description: |
+        嘉宾思考状态快照（公开版）。
+
+        ⚠️ 重要：此 Schema **不包含** `hidden_cot` 字段。
+        LLM 的完整推理链仅存储在后端，绝不通过 API 暴露。
+      required:
+        - id
+        - discussion_id
+        - guest_id
+        - status
+        - snapshot_at
+        - is_latest
+      properties:
+        id:
+          type: string
+          format: uuid
+        discussion_id:
+          type: string
+          format: uuid
+        guest_id:
+          type: string
+          format: uuid
+        guest_name:
+          type: string
+          description: 冗余嘉宾姓名，减少前端 JOIN 请求
+        guest_color:
+          type: string
+          description: 冗余嘉宾颜色
+        status:
+          $ref: "#/components/schemas/GuestStatus"
+        public_thought:
+          type: string
+          nullable: true
+          description: 公开思考摘要，如"正在组织关于就业市场弹性的数据"
+          example: "正在对比分析2020-2025年间AI相关岗位的增长率..."
+        confidence:
+          type: number
+          nullable: true
+          minimum: 0.0
+          maximum: 1.0
+          description: LLM 确信度
+        intent:
+          $ref: "#/components/schemas/Intent"
+        snapshot_at:
+          type: string
+          format: date-time
+        is_latest:
+          type: boolean
+          description: 是否为最新快照
+
+    # -------------------------------------------------------------------------
+    # TranscriptEntry (Message)
+    # -------------------------------------------------------------------------
+    TranscriptEntry:
+      type: object
+      description: 公开发言记录
+      required:
+        - id
+        - discussion_id
+        - guest_id
+        - sequence_number
+        - round_number
+        - entry_type
+        - content
+        - is_final
+        - spoken_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        discussion_id:
+          type: string
+          format: uuid
+        guest_id:
+          type: string
+          format: uuid
+        guest_name:
+          type: string
+          description: 冗余字段 — 发言人姓名
+          example: "李芳"
+        guest_title:
+          type: string
+          nullable: true
+          description: 冗余字段 — 发言人职业/Title
+          example: "AI 研究员"
+        guest_color:
+          type: string
+          description: 冗余字段 — 色块标识
+          example: "#4A90D9"
+        guest_role:
+          $ref: "#/components/schemas/GuestRole"
+        sequence_number:
+          type: integer
+          description: 全局递增序号
+        round_number:
+          type: integer
+          description: 轮次号
+        entry_type:
+          $ref: "#/components/schemas/EntryType"
+        content:
+          type: string
+          description: 发言内容（Markdown 格式）
+        quote_of:
+          type: string
+          format: uuid
+          nullable: true
+          description: 引用的前序发言 ID
+        is_final:
+          type: boolean
+          description: 是否为本轮最终定稿
+        spoken_at:
+          type: string
+          format: date-time
+
+    MessageListResponse:
+      type: object
+      required: [items, has_more]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/TranscriptEntry"
+        has_more:
+          type: boolean
+          description: 是否有更多数据
+        next_cursor:
+          type: integer
+          nullable: true
+          description: 下一页游标（sequence_number）
+          example: 51
+
+    # -------------------------------------------------------------------------
+    # Consensus & Divergence
+    # -------------------------------------------------------------------------
+    ConsensusItem:
+      type: object
+      required:
+        - id
+        - discussion_id
+        - content
+        - agreed_guests
+        - confidence
+        - first_identified_at
+        - last_reinforced_at
+        - is_active
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        discussion_id:
+          type: string
+          format: uuid
+        content:
+          type: string
+          description: 共识内容描述
+          example: "各方均认同 AI 监管需要分级制度"
+        agreed_guests:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: 达成共识的嘉宾 ID 列表
+        agreed_guest_names:
+          type: array
+          items:
+            type: string
+          description: 冗余字段 — 嘉宾姓名列表
+          example: ["李芳", "陈雪"]
+        confidence:
+          type: number
+          minimum: 0.0
+          maximum: 1.0
+          description: 共识强度
+        first_identified_at:
+          type: string
+          format: date-time
+        last_reinforced_at:
+          type: string
+          format: date-time
+        is_active:
+          type: boolean
+        source_entries:
+          type: array
+          items:
+            type: string
+            format: uuid
+          nullable: true
+          description: 支撑此共识的发言 ID
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    DivergenceItem:
+      type: object
+      required:
+        - id
+        - discussion_id
+        - content
+        - parties
+        - severity
+        - first_identified_at
+        - last_updated_at
+        - is_active
+        - resolved
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        discussion_id:
+          type: string
+          format: uuid
+        content:
+          type: string
+          description: 分歧内容描述
+          example: "关于基本收入的实施路径存在分歧"
+        parties:
+          type: array
+          items:
+            type: object
+            properties:
+              stance:
+                type: string
+                description: 立场描述
+              guest_ids:
+                type: array
+                items:
+                  type: string
+                  format: uuid
+              guest_names:
+                type: array
+                items:
+                  type: string
+                description: 冗余字段 — 嘉宾姓名
+          description: 分歧各方分组
+        severity:
+          $ref: "#/components/schemas/Severity"
+        first_identified_at:
+          type: string
+          format: date-time
+        last_updated_at:
+          type: string
+          format: date-time
+        is_active:
+          type: boolean
+        resolved:
+          type: boolean
+          description: 是否已化解
+        resolved_at:
+          type: string
+          format: date-time
+          nullable: true
+        resolution_note:
+          type: string
+          nullable: true
+        source_entries:
+          type: array
+          items:
+            type: string
+            format: uuid
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    # -------------------------------------------------------------------------
+    # Discussion Summary
+    # -------------------------------------------------------------------------
+    DiscussionSummary:
+      type: object
+      required:
+        - id
+        - discussion_id
+        - content
+        - generation_model
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        discussion_id:
+          type: string
+          format: uuid
+        content:
+          type: string
+          description: 主持人自然语言总结全文（Markdown）
+        key_findings:
+          type: array
+          items:
+            type: string
+          nullable: true
+          description: 关键发现列表
+        consensus_summary:
+          type: object
+          nullable: true
+          description: 共识汇总
+        divergence_summary:
+          type: object
+          nullable: true
+          description: 分歧汇总
+        guest_contributions:
+          type: array
+          nullable: true
+          items:
+            type: object
+            properties:
+              guest_id:
+                type: string
+                format: uuid
+              guest_name:
+                type: string
+              keywords:
+                type: array
+                items:
+                  type: string
+              highlights:
+                type: array
+                items:
+                  type: string
+          description: 各嘉宾贡献摘要
+        generation_model:
+          type: string
+          description: 生成总结的 LLM 模型标识
+        generation_cost:
+          type: object
+          nullable: true
+          properties:
+            tokens_in:
+              type: integer
+            tokens_out:
+              type: integer
+            latency_ms:
+              type: integer
+          description: 生成成本元数据
+        created_at:
+          type: string
+          format: date-time
+
+    # -------------------------------------------------------------------------
+    # SSE Event Payloads
+    # -------------------------------------------------------------------------
+    GuestStatusChangeEvent:
+      type: object
+      required: [type, payload]
+      properties:
+        type:
+          type: string
+          enum: [guest_status_change]
+        payload:
+          type: object
+          required: [discussion_id, guest_id, status]
+          properties:
+            discussion_id:
+              type: string
+              format: uuid
+            guest_id:
+              type: string
+              format: uuid
+            guest_name:
+              type: string
+            status:
+              $ref: "#/components/schemas/GuestStatus"
+            previous_status:
+              $ref: "#/components/schemas/GuestStatus"
+
+    SnapshotUpdateEvent:
+      type: object
+      required: [type, payload]
+      properties:
+        type:
+          type: string
+          enum: [snapshot_update]
+        payload:
+          $ref: "#/components/schemas/ThinkingSnapshotPublic"
+
+    TranscriptDeltaEvent:
+      type: object
+      description: |
+        流式发言增量。LLM 每生成一段文本片段即推送，
+        前端累加片段渲染，显示闪烁光标。
+      required: [type, payload]
+      properties:
+        type:
+          type: string
+          enum: [transcript_delta]
+        payload:
+          type: object
+          required: [entry_id, guest_id, content, is_final]
+          properties:
+            entry_id:
+              type: string
+              format: uuid
+            guest_id:
+              type: string
+              format: uuid
+            guest_name:
+              type: string
+            guest_color:
+              type: string
+            sequence_number:
+              type: integer
+            round_number:
+              type: integer
+            entry_type:
+              $ref: "#/components/schemas/EntryType"
+            content:
+              type: string
+              description: 增量文本片段
+            is_final:
+              type: boolean
+              description: 是否为本轮最后一段
+
+    TranscriptAppendEvent:
+      type: object
+      description: |
+        完整发言追加。发言者完成一段完整发言后推送。
+        通常紧接在最后一个 `transcript_delta` 之后。
+      required: [type, payload]
+      properties:
+        type:
+          type: string
+          enum: [transcript_append]
+        payload:
+          $ref: "#/components/schemas/TranscriptEntry"
+
+    ConsensusUpdateEvent:
+      type: object
+      required: [type, payload]
+      properties:
+        type:
+          type: string
+          enum: [consensus_update]
+        payload:
+          type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/ConsensusItem"
+              description: 当前全部活跃共识（全量替换）
+
+    DivergenceUpdateEvent:
+      type: object
+      required: [type, payload]
+      properties:
+        type:
+          type: string
+          enum: [divergence_update]
+        payload:
+          type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/DivergenceItem"
+              description: 当前全部活跃分歧（全量替换）
+
+    RoundAdvanceEvent:
+      type: object
+      required: [type, payload]
+      properties:
+        type:
+          type: string
+          enum: [round_advance]
+        payload:
+          type: object
+          required: [round_number]
+          properties:
+            round_number:
+              type: integer
+            total_rounds:
+              type: integer
+              nullable: true
+              description: max_rounds（若有设置上限）
+
+    DiscussionStatusChangeEvent:
+      type: object
+      required: [type, payload]
+      properties:
+        type:
+          type: string
+          enum: [discussion_status_change]
+        payload:
+          type: object
+          required: [discussion_id, status]
+          properties:
+            discussion_id:
+              type: string
+              format: uuid
+            status:
+              $ref: "#/components/schemas/DiscussionStatus"
+            previous_status:
+              $ref: "#/components/schemas/DiscussionStatus"
+            summary:
+              $ref: "#/components/schemas/DiscussionSummary"
+              description: finished 状态时附带总结
+
+    ErrorEvent:
+      type: object
+      required: [type, payload]
+      properties:
+        type:
+          type: string
+          enum: [error]
+        payload:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+
+    HeartbeatEvent:
+      type: object
+      required: [type, payload]
+      properties:
+        type:
+          type: string
+          enum: [heartbeat]
+        payload:
+          type: object
+          properties:
+            timestamp:
+              type: string
+              format: date-time
+            discussion_status:
+              $ref: "#/components/schemas/DiscussionStatus"
+
+    # -------------------------------------------------------------------------
+    # Error
+    # -------------------------------------------------------------------------
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: 机器可读错误码
+              example: "NOT_FOUND"
+            message:
+              type: string
+              description: 人类可读错误描述
+              example: "讨论会话不存在"
+            details:
+              description: 额外错误详情（可选）
+              oneOf:
+                - type: array
+                  items:
+                    type: object
+                - type: object
+              example:
+                - field: "expert_count"
+                  reason: "必须介于 2 和 8 之间"
