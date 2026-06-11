@@ -5,13 +5,13 @@ You are operating under the "Superpowers" engineering framework for this project
 
 ## Workflow Phases (Strict Adherence Required)
 
-### Phase 1: SDD (Schema/Spec Driven Development) - CURRENT PHASE
+### Phase 1: SDD (Schema/Spec Driven Development)
 - Before writing ANY code, we must define the contract.
 - For Database: Define SQLite Schema first (`docs/database_schema.sql`).
 - For API: Define Interface/Types first.
 - Ask for approval on the design before implementation.
 
-### Phase 2: DDD (Design Driven Development)
+### Phase 2: DDD (Design Driven Development) - CURRENT PHASE
 - Focus on clean architecture and separation of concerns.
 - Use TypeScript interfaces to enforce contracts.
 - Ensure UI components are decoupled from business logic.
