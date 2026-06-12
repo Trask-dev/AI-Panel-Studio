@@ -126,8 +126,7 @@ export default function App() {
     await runAsync("advancing", "AI 正在生成发言并分析共识…", async () => {
       const r = await api.advanceRound(discId);
       store.onRoundAdvance({ round_number: r.round_count });
-      const msgs = await api.fetchMessages(discId);
-      store.loadHistory((msgs && msgs.items) ? msgs.items : []);
+      // 发言由 SSE 逐条推送，不再一次性 fetch 覆盖
       if (r.consensus) store.onConsensusUpdate({ items: r.consensus });
       if (r.divergences) store.onDivergenceUpdate({ items: r.divergences });
       if (r.status === "summarizing") store.onDiscussionStatusChange({ status: "summarizing" });
