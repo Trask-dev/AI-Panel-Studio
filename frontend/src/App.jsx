@@ -167,6 +167,12 @@ export default function App() {
     <div className="app">
       <header className="app-header">
         <div className="app-header__left">
+          {discId && (
+            <button className="btn btn--ghost" style={{ marginRight: 8 }}
+              onClick={() => { store.reset(); setDiscId(null); setLineupConfirmed(false); }}>
+              ← 返回
+            </button>
+          )}
           <span className="app-logo">
             <span className="app-logo__icon">🎬</span>
             <span className="app-logo__text">AI Panel Studio</span>
