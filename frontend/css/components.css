@@ -551,14 +551,26 @@
  * 支持流式消息（虚线边框 + 闪烁光标）和轮次分隔线。
  * ============================================================================= */
 
-/* ---- 容器: Flex 纵向, 独立滚动 ---- */
+/* ---- 容器: Flex 纵向, 允许子元素独立滚动 ---- */
 .live-transcript {
-  position: relative;                        /* 为 scroll-to-bottom 提供定位锚点 */
+  position: relative;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   min-height: 0;
+  /* 关键: 确保 flex 子元素 .transcript-entries 可以收缩并独立滚动 */
   background: var(--bg-primary);
+}
+
+/* ---- 消息列表: flex:1 + overflow-y:auto 允许内容溢出时滚动 ---- */
+.transcript-entries {
+  flex: 1;
+  min-height: 0;                             /* flex 子元素允许收缩 */
+  overflow-y: auto;
+  padding: var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 /* ---- 顶部控制栏 ---- */
@@ -594,16 +606,6 @@
   color: var(--success);
   background: rgba(80, 184, 108, 0.12);
   border: 1px solid rgba(80, 184, 108, 0.25);
-}
-
-/* ---- 消息列表: 独立滚动区 ---- */
-.transcript-entries {
-  flex: 1;
-  overflow-y: auto;                          /* 核心: 独立滚动 */
-  padding: var(--space-md);
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
 }
 
 /* ---- 轮次分隔线 ---- */

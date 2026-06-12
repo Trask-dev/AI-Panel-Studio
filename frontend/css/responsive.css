@@ -61,7 +61,7 @@
 @media (max-width: 1279px) {
   /* ---- 舞台区缩小 ---- */
   .studio-stage {
-    flex: 0 0 28%;                         /* 从 35% 缩小到 28% */
+    max-height: 35vh;
     padding: var(--space-md);
     gap: var(--space-md);
   }
@@ -216,7 +216,7 @@
 
   /* ---- 舞台区: 横向 Snap Scroll ---- */
   .studio-stage {
-    flex: 0 0 auto;                        /* 高度由内容决定 */
+    max-height: 50vh;                      /* 手机端最多占半屏 */
     padding: var(--space-md) var(--space-sm);
     gap: var(--space-md);
   }

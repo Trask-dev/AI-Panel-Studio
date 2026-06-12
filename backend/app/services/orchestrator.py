@@ -214,6 +214,9 @@ class Orchestrator:
             "discussion_id": discussion_id, "round_number": round_number,
         })
 
+        # 4.5 共识/分歧分析 → SSE
+        self._analyze_and_push_consensus(discussion_id)
+
         # 5. 检查是否达到 max_rounds
         max_rounds = self._get_max_rounds(discussion_id)
         if max_rounds is not None and round_number >= max_rounds:
@@ -379,6 +382,29 @@ class Orchestrator:
         return {"id": eid, "discussion_id": did, "guest_id": gid,
                 "sequence_number": seq, "round_number": rnd,
                 "entry_type": entry_type, "content": content}
+
+    def _analyze_and_push_consensus(self, discussion_id: str) -> None:
+        """每轮结束后分析共识/分歧并推送 SSE。"""
+        try:
+            from app.services.consensus_analyzer import ConsensusAnalyzer
+            analyzer = ConsensusAnalyzer()
+            result = analyzer.analyze_and_persist(self.db, discussion_id)
+
+            consensus_items = result.get("consensus", [])
+            divergences_items = result.get("divergences", [])
+
+            if consensus_items:
+                self._push_sse(discussion_id, "consensus_update", {
+                    "discussion_id": discussion_id,
+                    "items": consensus_items,
+                })
+            if divergences_items:
+                self._push_sse(discussion_id, "divergence_update", {
+                    "discussion_id": discussion_id,
+                    "items": divergences_items,
+                })
+        except Exception:
+            pass  # 共识分析失败不影响主流程
 
     def _push_sse(self, did: str, event_type: str, payload: dict) -> None:
         """推送 SSE 事件 (线程安全, 可从 sync 代码直接调用)。"""

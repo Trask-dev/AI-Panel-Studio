@@ -501,15 +501,26 @@ function GuestCard({ guest }) {
 // AnalysisPanel
 // =========================================================================
 function AnalysisPanel({ discussionId }) {
+  const storeConsensus = useDiscussionStore((s) => s.consensus);
+  const storeDivergences = useDiscussionStore((s) => s.divergences);
   const [consensus, setConsensus] = useState([]);
   const [divergences, setDivergences] = useState([]);
 
+  // 首次挂载从 REST 加载；后续 SSE 事件通过 store 驱动更新
   useEffect(() => {
     if (discussionId) {
       api.fetchConsensus(discussionId).then((d) => setConsensus((d && d.items) || []));
       api.fetchDivergences(discussionId).then((d) => setDivergences((d && d.items) || []));
     }
   }, [discussionId]);
+
+  // SSE 事件 → 实时更新
+  useEffect(() => {
+    if (storeConsensus.length > 0) setConsensus(storeConsensus);
+  }, [storeConsensus]);
+  useEffect(() => {
+    if (storeDivergences.length > 0) setDivergences(storeDivergences);
+  }, [storeDivergences]);
 
   return (
     <>
