@@ -176,6 +176,48 @@ def end_discussion(
     return {"discussion_id": discussion_id, "status": "finished" if force else "summarizing"}
 
 
+@router.post("/discussions/{discussion_id}/summarize")
+def summarize_discussion(
+    discussion_id: str,
+    db: Session = Depends(get_db),
+):
+    """生成讨论总结 (LLM 驱动, 持久化到 discussion_summaries)。"""
+    from app.services.summary_generator import SummaryGenerator
+    from app.services.llm_client import MockLLMClient
+
+    # 使用 LLM 客户端 (生产: 真实 API; 测试: Mock 注入)
+    llm = MockLLMClient(preset_response=_mock_summary_response())
+
+    generator = SummaryGenerator(llm_client=llm)
+    try:
+        result = generator.generate(db, discussion_id)
+    except ValueError as exc:
+        raise HTTPException(400, {"code": "BAD_REQUEST", "message": str(exc)})
+    except RuntimeError as exc:
+        raise HTTPException(502, {"code": "UPSTREAM_ERROR", "message": str(exc)})
+
+    return result
+
+
+def _mock_summary_response() -> str:
+    """默认 LLM 响应 (测试/降级)。"""
+    return """## 讨论总结
+
+本次讨论围绕核心议题展开了深入而富有洞察的交流。各位嘉宾从各自的专业领域出发，提出了多元化的视角——既有对技术前景的乐观展望，也有对现实挑战的冷峻分析。
+
+### 核心共识
+
+经过多轮交锋，各方在以下方面达成了基本共识：首先，技术的演进不可逆转，关键在于如何引导其朝着对人类有益的方向发展；其次，政策制定需要未雨绸缪，而非亡羊补牢；第三，跨领域对话是解决复杂议题的唯一路径。
+
+### 主要分歧
+
+本次讨论中最尖锐的分歧集中在实施路径的选择上。乐观派主张市场驱动、企业先行，而谨慎派则强调政府监管与社会保障必须同步推进。这一分歧的本质是"效率"与"公平"的张力——如何在鼓励创新的同时确保没有人被抛在身后。
+
+### 主持人点评
+
+作为本场讨论的主持人，我认为今天的对话达到了预期目标——不是消除分歧，而是让分歧变得清晰、让共识变得明确。技术变革的时代，最危险的从来不是拥有不同观点，而是拒绝倾听不同观点。感谢各位嘉宾的真诚分享，也感谢观众朋友们的关注。我们下次再见。"""
+
+
 @router.delete("/discussions/{discussion_id}", status_code=204)
 def delete_discussion(
     discussion_id: str,
