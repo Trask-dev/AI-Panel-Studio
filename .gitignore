@@ -31,3 +31,6 @@ venv/
 Thumbs.db
 .DS_Store
 /frontend/node_modules/
+/backend/data/dev.db-wal
+/backend/data/dev.db-shm
+/backend/data/dev.db
