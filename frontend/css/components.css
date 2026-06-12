@@ -219,7 +219,7 @@
   padding: var(--space-lg);
 }
 
-/* ---- 径向光晕: 从舞台中央上方发散 ---- */
+/* ---- 径向光晕: 聚光灯效果 ---- */
 .stage-lighting {
   position: absolute;
   top: -30%;
@@ -229,8 +229,8 @@
   height: 150%;
   background: radial-gradient(
     ellipse at 50% 35%,
-    rgba(232, 168, 64, 0.07) 0%,
-    rgba(232, 168, 64, 0.03) 30%,
+    rgba(71, 184, 137, 0.08) 0%,
+    rgba(71, 184, 137, 0.03) 30%,
     transparent 70%
   );
   pointer-events: none;
@@ -284,16 +284,17 @@
 
 /* ---- 尺寸: Host vs Expert ---- */
 .guest-card--host {
-  min-width: 200px;
-  padding: var(--space-xl);
-  border-width: 3px;                         /* Host 更粗边框 */
+  width: 180px;
+  max-width: 180px;
+  padding: var(--space-lg);
+  border-width: 3px;
   border-image: linear-gradient(135deg, var(--gold), var(--gold-dark)) 1;
-  /* 微妙的金色卡片投影 */
-  box-shadow: 0 0 30px rgba(232, 168, 64, 0.08);
+  box-shadow: var(--shadow-glow-gold);
 }
 
 .guest-card--expert {
-  min-width: 160px;
+  width: 150px;
+  max-width: 150px;
 }
 
 /* ---- Avatar 区域 ---- */
@@ -698,7 +699,7 @@
 /* 消息正文 */
 .entry-content {
   font-size: var(--text-sm);
-  color: var(--text-primary);
+  color: #3d5a4b;                            /* 降权: 不抢舞台区视线 */
   line-height: 1.7;
 }
 

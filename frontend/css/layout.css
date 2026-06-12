@@ -41,14 +41,15 @@
   min-height: 0;                             /* Flex 子元素允许收缩到内容以下 */
 }
 
-/* ---- 舞台区: 最小高度替代固定百分比，允许滚动 ---- */
+/* ---- 舞台区: 40% 视觉主角 ---- */
 .studio-stage {
-  flex: 0 1 auto;                            /* 由内容决定高度，可收缩 */
-  min-height: 120px;                         /* 保证至少可见 */
-  max-height: 40vh;                          /* 不超过视口 40% */
+  flex: 0 1 auto;
+  min-height: 140px;
+  max-height: 45vh;                          /* 从 40vh 提升 */
   position: relative;
-  overflow-y: auto;                          /* 嘉宾多时舞台区内滚动 */
+  overflow-y: auto;
   overflow-x: hidden;
+  border-bottom: 1px solid rgba(71, 184, 137, 0.15);  /* 绿分割线 */
 }
 
 /* ---- 下半区: 弹性比例 Grid（clamp 保证面板可读） ---- */

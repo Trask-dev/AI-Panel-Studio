@@ -144,14 +144,14 @@
  * 动画应用规则 — 将 @keyframes 绑定到对应元素
  * ============================================================================= */
 
-/* thinking 卡片: 边框脉冲, 1.5s 循环, 无限 */
+/* thinking 卡片: 边框脉冲, 0.8s 循环 */
 .guest-card--thinking {
-  animation: pulse-border 1.5s ease-in-out infinite;
+  animation: pulse-border 0.8s ease-in-out infinite;
 }
 
-/* speaking 卡片: 光晕呼吸, 3s 循环, 无限 (叠加静态 box-shadow) */
+/* speaking 卡片: 光晕呼吸, 1.5s 循环 */
 .guest-card--speaking {
-  animation: glow-breathing 3s ease-in-out infinite;
+  animation: glow-breathing 1.5s ease-in-out infinite;
 }
 
 /* 流式光标: 1s step-end 闪烁, 无限 */

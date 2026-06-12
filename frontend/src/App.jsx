@@ -177,10 +177,7 @@ export default function App() {
               ← 返回
             </button>
           )}
-          <span className="app-logo">
-            <span className="app-logo__icon">🎬</span>
-            <span className="app-logo__text">AI Panel Studio</span>
-          </span>
+          <span className="app-logo__text">AI 圆桌讨论</span>
         </div>
         <div className="app-header__center">
           <h1 className="discussion-topic">
@@ -211,24 +208,23 @@ export default function App() {
                 store.initDiscussion(detail.discussion, gen.guests || []);
               });
             }}>
-              {asyncStatus.type === "generating" ? "⏳ 生成中…" : "🤖 生成嘉宾"}
+              {asyncStatus.type === "generating" ? "生成中…" : "生成嘉宾"}
             </button>
           )}
           {discId && store.meta.status === "setup" && host && !lineupConfirmed && (
             <>
               <button className="btn btn--primary" onClick={() => setLineupConfirmed(true)}>
-                ✅ 确认阵容
+                确认阵容
               </button>
-              <button className="btn btn--secondary" onClick={async () => {
-                try {
+              <button className="btn btn--secondary" disabled={asyncStatus.type !== "idle"} onClick={async () => {
+                await runAsync("generating", "AI 正在重新生成嘉宾阵容…", async () => {
                   const gen = await api.generateGuests(discId);
-                  const detail = await api.getDiscussion(discId);
-                  store.initDiscussion(detail.discussion, gen.guests || []);
-                  api.fetchConsensus(discId).then(r => { if (r && r.items) store.onConsensusUpdate({ items: r.items }); });
-                  api.fetchDivergences(discId).then(r => { if (r && r.items) store.onDivergenceUpdate({ items: r.items }); });
-                } catch (e) { setError("重新生成失败: " + (e.message || "")); }
+                  store.initDiscussion(useDiscussionStore.getState().meta, gen.guests || []);
+                  api.fetchConsensus(discId).then(r => { if (r?.items) store.onConsensusUpdate({ items: r.items }); });
+                  api.fetchDivergences(discId).then(r => { if (r?.items) store.onDivergenceUpdate({ items: r.items }); });
+                });
               }}>
-                🔄 重新生成
+                重新生成
               </button>
             </>
           )}
@@ -243,18 +239,18 @@ export default function App() {
                 api.fetchDivergences(discId).then(r => { if (r?.items) store.onDivergenceUpdate({ items: r.items }); });
               });
             }}>
-              {asyncStatus.type === "starting" ? "⏳ 准备中…" : "🎬 开始讨论"}
+              {asyncStatus.type === "starting" ? "准备中…" : "开始讨论"}
             </button>
           )}
           {discId && store.meta.status === "active" && (
             <>
               <button className="btn btn--secondary" onClick={handleAdvanceRound}
                 disabled={asyncStatus.type !== "idle"}>
-                {asyncStatus.type === "advancing" ? "⏳ 生成中…" : "▶ 下一轮"}
+                {asyncStatus.type === "advancing" ? "生成中…" : "下一轮"}
               </button>
               <button className="btn btn--secondary" onClick={handleEnd}
                 disabled={asyncStatus.type !== "idle"}>
-                {asyncStatus.type === "summarizing" ? "⏳ 总结中…" : "■ 结束"}
+                {asyncStatus.type === "summarizing" ? "总结中…" : "结束"}
               </button>
             </>
           )}
@@ -449,7 +445,7 @@ function GuestCard({ guest }) {
           {guest.name?.[0] || "?"}
         </div>
         {isHost ? (
-          <span className="guest-role-badge guest-role-badge--host">🎤 主持</span>
+          <span className="guest-role-badge guest-role-badge--host">主持</span>
         ) : (
           <span className="guest-stance-label" style={{ "--guest-color": guest.color }}>
             {guest.stance_label || "嘉宾"}
