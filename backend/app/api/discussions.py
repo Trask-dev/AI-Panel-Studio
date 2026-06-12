@@ -14,7 +14,6 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.database import get_test_session
 from app.services.orchestrator import Orchestrator
 from app.services.persona_generator import GuestGenerator
 
@@ -55,9 +54,27 @@ class ErrorResponse(BaseModel):
 def get_db():
     """获取数据库 session (generator, FastAPI 自动管理生命周期)。
 
-    生产环境应从连接池获取；测试环境复用 :memory: session。
+    测试环境 (PYTEST_RUNNING=1) 用 :memory:，生产环境用 data/dev.db。
     """
-    session = get_test_session()
+    import os
+    from pathlib import Path
+    from app.database import get_engine, init_db, create_session_factory
+
+    if os.getenv("PYTEST_RUNNING") == "1":
+        db_url = "sqlite:///:memory:"
+    else:
+        db_url = os.getenv("DATABASE_URL", "sqlite:///data/dev.db")
+        # 确保 data 目录存在
+        if db_url.startswith("sqlite:///") and not db_url.startswith("sqlite:///:memory:"):
+            db_path = Path(db_url.replace("sqlite:///", ""))
+            if not db_path.is_absolute():
+                db_path = Path.cwd() / db_path
+            db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    engine = get_engine(db_url)
+    init_db(engine)
+    factory = create_session_factory(engine)
+    session = factory()
     try:
         yield session
     finally:
@@ -65,11 +82,42 @@ def get_db():
 
 
 def get_orchestrator(db: Session = Depends(get_db)) -> Orchestrator:
-    return Orchestrator(db)
+    """创建 Orchestrator，注入 LLM 驱动的发言生成器。"""
+    from app.services.speech_generator import SpeechGenerator
+    from app.utils.sse_manager import get_sse_manager
+
+    sse = get_sse_manager()
+    llm = _make_llm_client()
+    if not llm:
+        return Orchestrator(db, sse_manager=sse)
+
+    gen = SpeechGenerator(llm)
+
+    def llm_speech(guest_name: str, entry_type: str) -> str:
+        return gen.generate_by_name(db, guest_name, entry_type)
+
+    return Orchestrator(db, speech_fn=llm_speech, sse_manager=sse)
+
+
+def _make_llm_client():
+    """从环境变量创建 LLMClient 实例。无 API Key 则返回 None。"""
+    import os
+    from app.services.llm_client import LLMClient
+
+    api_key = os.getenv("LLM_API_KEY", "")
+    if not api_key:
+        return None
+    return LLMClient(
+        api_key=api_key,
+        model=os.getenv("LLM_MODEL", "deepseek-chat"),
+        base_url=os.getenv("LLM_BASE_URL", "https://api.deepseek.com/v1"),
+        timeout=int(os.getenv("LLM_TIMEOUT", "30")),
+        max_retries=int(os.getenv("LLM_MAX_RETRIES", "1")),
+    )
 
 
 def get_guest_generator() -> GuestGenerator:
-    return GuestGenerator()
+    return GuestGenerator(llm_client=_make_llm_client())
 
 
 # =============================================================================
@@ -142,6 +190,114 @@ def get_discussion(
     }
 
 
+@router.post("/discussions/{discussion_id}/guests/generate")
+def generate_guests(
+    discussion_id: str,
+    db: Session = Depends(get_db),
+):
+    """LLM 生成嘉宾阵容并持久化到数据库。
+
+    流程:
+      1. 从 DB 读取讨论的 topic + expert_count
+      2. 调用 GuestGenerator (Mock LLM) 生成 1 Host + N Expert
+      3. 将嘉宾写入 guests 表
+      4. 返回完整的嘉宾列表
+
+    调用时机: 创建讨论后、开始讨论前。必需步骤，否则 /start 会 409。
+    """
+    # 1. 读取讨论信息
+    disc = db.execute(
+        text("SELECT * FROM discussions WHERE id = :did"), {"did": discussion_id}
+    ).fetchone()
+    if disc is None:
+        raise HTTPException(404, {"code": "NOT_FOUND", "message": "讨论不存在"})
+
+    # 2. 检查是否已有活跃嘉宾 (防止重复生成)
+    existing = db.execute(
+        text(
+            "SELECT COUNT(*) as c FROM guests "
+            "WHERE discussion_id = :did AND is_active = 1"
+        ),
+        {"did": discussion_id},
+    ).fetchone().c
+    if existing > 0:
+        # 已有嘉宾，直接返回
+        guests = db.execute(
+            text(
+                "SELECT * FROM guests "
+                "WHERE discussion_id = :did AND is_active = 1 "
+                "ORDER BY speech_order"
+            ),
+            {"did": discussion_id},
+        ).fetchall()
+        return {
+            "discussion_id": discussion_id,
+            "guests": [dict(g._mapping) for g in guests],
+            "generated": False,
+        }
+
+    # 3. 调用 GuestGenerator
+    gen = get_guest_generator()  # 从环境变量读取 LLM 配置
+    try:
+        guest_list = gen.generate(
+            topic=disc.topic,
+            expert_count=disc.expert_count,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, {"code": "BAD_REQUEST", "message": str(exc)})
+
+    # 4. 持久化到数据库
+    import uuid
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    for idx, guest in enumerate(guest_list):
+        gid = str(uuid.uuid4())
+        db.execute(
+            text(
+                "INSERT INTO guests "
+                "(id, discussion_id, role, name, title, bio, stance, stance_label, "
+                " color, avatar_url, status, speech_order, persona_prompt, is_active, "
+                " created_at, updated_at) "
+                "VALUES "
+                "(:id, :did, :role, :name, :title, :bio, :stance, :stance_label, "
+                " :color, NULL, 'idle', :order, :prompt, 1, :now, :now)"
+            ),
+            {
+                "id": gid,
+                "did": discussion_id,
+                "role": guest.role,
+                "name": guest.name,
+                "title": guest.title,
+                "bio": guest.bio,
+                "stance": guest.stance or "",
+                "stance_label": guest.stance_label or "",
+                "color": guest.color or "#9090a0",
+                "order": idx,
+                "prompt": guest.persona_prompt or "",
+                "now": now,
+            },
+        )
+    db.commit()
+
+    # 5. 返回结果
+    saved = db.execute(
+        text(
+            "SELECT * FROM guests "
+            "WHERE discussion_id = :did AND is_active = 1 "
+            "ORDER BY speech_order"
+        ),
+        {"did": discussion_id},
+    ).fetchall()
+
+    return {
+        "discussion_id": discussion_id,
+        "guests": [dict(g._mapping) for g in saved],
+        "generated": True,
+    }
+
+
 @router.post("/discussions/{discussion_id}/start")
 def start_discussion(
     discussion_id: str,
@@ -155,6 +311,36 @@ def start_discussion(
         raise HTTPException(409, {"code": "CONFLICT", "message": str(exc)})
     db.commit()
     return {"discussion_id": discussion_id, "status": "active"}
+
+
+@router.post("/discussions/{discussion_id}/rounds/next")
+def advance_round(
+    discussion_id: str,
+    db: Session = Depends(get_db),
+    orch: Orchestrator = Depends(get_orchestrator),
+):
+    """推进一轮讨论 (主持人提问 → 各专家依次发言 → 轮次+1)。
+
+    每调用一次，所有专家依次发言一轮。达到 max_rounds 时自动变为 summarizing。
+    调用时机: /start 之后, /end 之前。
+    """
+    try:
+        orch.run_round(discussion_id)
+    except ValueError as exc:
+        raise HTTPException(409, {"code": "CONFLICT", "message": str(exc)})
+    db.commit()
+
+    # 查询当前轮次和状态
+    disc = db.execute(
+        text("SELECT round_count, status FROM discussions WHERE id = :did"),
+        {"did": discussion_id},
+    ).fetchone()
+
+    return {
+        "discussion_id": discussion_id,
+        "round_count": disc.round_count,
+        "status": disc.status,
+    }
 
 
 @router.post("/discussions/{discussion_id}/end")
@@ -183,10 +369,8 @@ def summarize_discussion(
 ):
     """生成讨论总结 (LLM 驱动, 持久化到 discussion_summaries)。"""
     from app.services.summary_generator import SummaryGenerator
-    from app.services.llm_client import MockLLMClient
 
-    # 使用 LLM 客户端 (生产: 真实 API; 测试: Mock 注入)
-    llm = MockLLMClient(preset_response=_mock_summary_response())
+    llm = _make_llm_client()  # API Key 存在则用真实 LLM，否则 fallback
 
     generator = SummaryGenerator(llm_client=llm)
     try:
@@ -199,23 +383,145 @@ def summarize_discussion(
     return result
 
 
-def _mock_summary_response() -> str:
-    """默认 LLM 响应 (测试/降级)。"""
-    return """## 讨论总结
+# =============================================================================
+# 查询端点 (前端数据源)
+# =============================================================================
 
-本次讨论围绕核心议题展开了深入而富有洞察的交流。各位嘉宾从各自的专业领域出发，提出了多元化的视角——既有对技术前景的乐观展望，也有对现实挑战的冷峻分析。
+@router.get("/discussions/{discussion_id}/messages")
+def list_messages(
+    discussion_id: str,
+    cursor: int = Query(0),
+    limit: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+):
+    """获取发言记录（游标分页）。
 
-### 核心共识
+    首次请求 cursor=0，后续传上次返回的 next_cursor。
+    """
+    rows = db.execute(
+        text(
+            "SELECT te.*, g.name as guest_name, g.title as guest_title, "
+            "g.color as guest_color, g.role as guest_role "
+            "FROM transcript_entries te "
+            "JOIN guests g ON te.guest_id = g.id "
+            "WHERE te.discussion_id = :did AND te.sequence_number > :cur "
+            "ORDER BY te.sequence_number ASC "
+            "LIMIT :lim"
+        ),
+        {"did": discussion_id, "cur": cursor, "lim": limit},
+    ).fetchall()
 
-经过多轮交锋，各方在以下方面达成了基本共识：首先，技术的演进不可逆转，关键在于如何引导其朝着对人类有益的方向发展；其次，政策制定需要未雨绸缪，而非亡羊补牢；第三，跨领域对话是解决复杂议题的唯一路径。
+    items = [dict(r._mapping) for r in rows]
+    next_cursor = items[-1]["sequence_number"] if items else cursor
+    total = db.execute(
+        text(
+            "SELECT COUNT(*) as c FROM transcript_entries "
+            "WHERE discussion_id = :did"
+        ),
+        {"did": discussion_id},
+    ).fetchone().c
 
-### 主要分歧
+    return {
+        "items": items,
+        "has_more": len(items) == limit,
+        "next_cursor": next_cursor,
+        "total": total,
+    }
 
-本次讨论中最尖锐的分歧集中在实施路径的选择上。乐观派主张市场驱动、企业先行，而谨慎派则强调政府监管与社会保障必须同步推进。这一分歧的本质是"效率"与"公平"的张力——如何在鼓励创新的同时确保没有人被抛在身后。
 
-### 主持人点评
+@router.get("/discussions/{discussion_id}/consensus")
+def list_consensus(
+    discussion_id: str,
+    include_inactive: bool = Query(False),
+    db: Session = Depends(get_db),
+):
+    """获取共识列表。"""
+    clause = "" if include_inactive else " AND is_active = 1"
+    rows = db.execute(
+        text(
+            "SELECT * FROM consensus_items "
+            "WHERE discussion_id = :did" + clause + " ORDER BY first_identified_at"
+        ),
+        {"did": discussion_id},
+    ).fetchall()
+    return {"items": [dict(r._mapping) for r in rows]}
 
-作为本场讨论的主持人，我认为今天的对话达到了预期目标——不是消除分歧，而是让分歧变得清晰、让共识变得明确。技术变革的时代，最危险的从来不是拥有不同观点，而是拒绝倾听不同观点。感谢各位嘉宾的真诚分享，也感谢观众朋友们的关注。我们下次再见。"""
+
+@router.get("/discussions/{discussion_id}/divergences")
+def list_divergences(
+    discussion_id: str,
+    include_resolved: bool = Query(False),
+    db: Session = Depends(get_db),
+):
+    """获取分歧列表。"""
+    clause = "" if include_resolved else " AND is_active = 1 AND resolved = 0"
+    rows = db.execute(
+        text(
+            "SELECT * FROM divergence_items "
+            "WHERE discussion_id = :did" + clause + " ORDER BY first_identified_at"
+        ),
+        {"did": discussion_id},
+    ).fetchall()
+    return {"items": [dict(r._mapping) for r in rows]}
+
+
+@router.get("/discussions/{discussion_id}/summary")
+def get_summary(
+    discussion_id: str,
+    db: Session = Depends(get_db),
+):
+    """获取讨论总结。"""
+    row = db.execute(
+        text("SELECT * FROM discussion_summaries WHERE discussion_id = :did"),
+        {"did": discussion_id},
+    ).fetchone()
+    if row is None:
+        raise HTTPException(404, {"code": "NOT_FOUND", "message": "总结尚未生成"})
+    return dict(row._mapping)
+
+
+# =============================================================================
+# SSE 实时事件流
+# =============================================================================
+
+@router.get("/discussions/{discussion_id}/events")
+async def stream_events(
+    discussion_id: str,
+    after_sequence: int = Query(0),
+):
+    """SSE 实时事件流端点。
+
+    连接后持续推送 transcript_delta / guest_status_change 等事件。
+    前端通过 EventSource 连接此端点。
+    """
+    from fastapi.responses import StreamingResponse
+    from app.utils.sse_manager import get_sse_manager
+
+    manager = get_sse_manager()
+    q = manager.subscribe(discussion_id)
+
+    async def event_generator():
+        import asyncio
+        import queue
+        try:
+            while True:
+                try:
+                    data = await asyncio.to_thread(q.get, timeout=1.0)
+                    yield f"data: {data}\n\n"
+                except queue.Empty:
+                    yield ":heartbeat\n\n"
+        finally:
+            manager.unsubscribe(discussion_id, q)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.delete("/discussions/{discussion_id}", status_code=204)

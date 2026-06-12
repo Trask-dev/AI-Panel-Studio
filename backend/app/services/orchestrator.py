@@ -90,10 +90,12 @@ class Orchestrator:
         self,
         db: Session,
         speech_fn: Callable[[str, str], str] | None = None,
+        sse_manager=None,  # SSEManager 单例，用于推送实时事件
     ):
         self.db = db
         self._speech = speech_fn or self._default_speech
         self._state_machine = GuestStateMachine()
+        self._sse = sse_manager
 
     # -------------------------------------------------------------------------
     # Public API
@@ -111,9 +113,30 @@ class Orchestrator:
 
         # 写开场白
         opening = self._speech(host.name, "opening_statement")
-        self._insert_entry(
+        entry = self._insert_entry(
             discussion_id, host.id, 1, 0, "opening_statement", opening
         )
+
+        # SSE 推送: 讨论状态变化 + 开场白
+        self._push_sse(discussion_id, "discussion_status_change", {
+            "discussion_id": discussion_id,
+            "status": "active",
+            "previous_status": "setup",
+        })
+        self._push_sse(discussion_id, "transcript_append", {
+            "id": entry["id"],
+            "discussion_id": discussion_id,
+            "guest_id": host.id,
+            "guest_name": host.name,
+            "guest_color": host.color or "#E8A840",
+            "guest_role": "host",
+            "guest_title": host.title or "",
+            "sequence_number": 1,
+            "round_number": 0,
+            "entry_type": "opening_statement",
+            "content": opening,
+            "is_final": True,
+        })
 
         # 更新状态
         self._update_discussion(discussion_id, {
@@ -143,32 +166,61 @@ class Orchestrator:
 
         # 2. 各专家发言
         for expert in experts:
-            # thinking
+            # thinking → SSE
             self.set_guest_status(discussion_id, expert.id, "thinking")
-            # speaking
+            self._push_sse(discussion_id, "guest_status_change", {
+                "discussion_id": discussion_id, "guest_id": expert.id,
+                "guest_name": expert.name, "status": "thinking",
+            })
+
+            # speaking → SSE
             self.set_guest_status(discussion_id, expert.id, "speaking")
+            self._push_sse(discussion_id, "guest_status_change", {
+                "discussion_id": discussion_id, "guest_id": expert.id,
+                "guest_name": expert.name, "status": "speaking",
+            })
 
             entry_type = "position_statement" if round_number == 1 else "speech"
             content = self._speech(expert.name, entry_type)
-            self._insert_entry(
+            entry = self._insert_entry(
                 discussion_id, expert.id, seq, round_number, entry_type, content
             )
+
+            # transcript_append → SSE
+            self._push_sse(discussion_id, "transcript_append", {
+                "id": entry["id"], "discussion_id": discussion_id,
+                "guest_id": expert.id, "guest_name": expert.name,
+                "guest_color": expert.color or "#9090a0",
+                "guest_role": "expert", "guest_title": expert.title or "",
+                "sequence_number": seq, "round_number": round_number,
+                "entry_type": entry_type, "content": content, "is_final": True,
+            })
             seq += 1
 
-            # 发言结束 → waiting
+            # waiting → SSE
             self.set_guest_status(discussion_id, expert.id, "waiting")
+            self._push_sse(discussion_id, "guest_status_change", {
+                "discussion_id": discussion_id, "guest_id": expert.id,
+                "guest_name": expert.name, "status": "waiting",
+            })
 
         # 3. 所有专家冷却结束 → idle
         for expert in experts:
             self.set_guest_status(discussion_id, expert.id, "idle")
 
-        # 4. 轮次 +1
+        # 4. 轮次 +1 → SSE
         self._update_discussion(discussion_id, {"round_count": round_number})
+        self._push_sse(discussion_id, "round_advance", {
+            "discussion_id": discussion_id, "round_number": round_number,
+        })
 
         # 5. 检查是否达到 max_rounds
         max_rounds = self._get_max_rounds(discussion_id)
         if max_rounds is not None and round_number >= max_rounds:
             self._update_discussion(discussion_id, {"status": "summarizing"})
+            self._push_sse(discussion_id, "discussion_status_change", {
+                "discussion_id": discussion_id, "status": "summarizing",
+            })
 
     def finish(self, discussion_id: str) -> None:
         """正常结束讨论: 生成 Host 总结 → 设为 finished。"""
@@ -281,20 +333,33 @@ class Orchestrator:
         ).fetchone().status
 
     def _next_sequence(self, did: str) -> int:
-        row = self.db.execute(
-            text(
-                "SELECT COALESCE(MAX(sequence_number), 0) + 1 AS nxt "
-                "FROM transcript_entries WHERE discussion_id = :did"
-            ),
-            {"did": did},
-        ).fetchone()
+        """获取下一个 sequence_number，带 UNIQUE 冲突重试。"""
+        for _ in range(3):
+            row = self.db.execute(
+                text(
+                    "SELECT COALESCE(MAX(sequence_number), 0) + 1 AS nxt "
+                    "FROM transcript_entries WHERE discussion_id = :did"
+                ),
+                {"did": did},
+            ).fetchone()
+            # 确认无冲突
+            existing = self.db.execute(
+                text(
+                    "SELECT 1 FROM transcript_entries "
+                    "WHERE discussion_id = :did AND sequence_number = :seq"
+                ),
+                {"did": did, "seq": row.nxt},
+            ).fetchone()
+            if existing is None:
+                return row.nxt
         return row.nxt
 
     def _insert_entry(
         self, did: str, gid: str, seq: int, rnd: int,
         entry_type: str, content: str,
-    ) -> None:
+    ) -> dict:
         import uuid
+        eid = str(uuid.uuid4())
         now = _now()
         self.db.execute(
             text(
@@ -305,12 +370,24 @@ class Orchestrator:
                 "(:id, :did, :gid, :seq, :rnd, :typ, :cnt, 1, :now, :now)"
             ),
             {
-                "id": str(uuid.uuid4()), "did": did, "gid": gid,
+                "id": eid, "did": did, "gid": gid,
                 "seq": seq, "rnd": rnd, "typ": entry_type, "cnt": content,
                 "now": now,
             },
         )
         self.db.commit()
+        return {"id": eid, "discussion_id": did, "guest_id": gid,
+                "sequence_number": seq, "round_number": rnd,
+                "entry_type": entry_type, "content": content}
+
+    def _push_sse(self, did: str, event_type: str, payload: dict) -> None:
+        """推送 SSE 事件 (线程安全, 可从 sync 代码直接调用)。"""
+        if self._sse is None:
+            return
+        from app.utils.sse_manager import SSEEvent
+
+        payload.setdefault("discussion_id", did)
+        self._sse.push(SSEEvent(type=event_type, payload=payload))
 
     def _update_discussion(self, did: str, fields: dict) -> None:
         sets = ", ".join(f"{k} = :{k}" for k in fields)

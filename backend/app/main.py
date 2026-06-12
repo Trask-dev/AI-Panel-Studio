@@ -7,6 +7,10 @@
   - Discussions API 路由
 """
 
+# 自动加载 .env 文件（必须在其他导入之前）
+from dotenv import load_dotenv
+load_dotenv()
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -97,11 +101,18 @@ def health_check():
       - database: "connected" | "error"
       - llm: "configured" | "not_configured"
     """
-    from app.database import get_test_session
+    import os
+    from app.database import get_engine, init_db, create_session_factory
 
     db_status = "error"
     try:
-        session = get_test_session()
+        if os.getenv("PYTEST_RUNNING") == "1":
+            db_url = "sqlite:///:memory:"
+        else:
+            db_url = os.getenv("DATABASE_URL", "sqlite:///data/dev.db")
+        engine = get_engine(db_url)
+        init_db(engine)
+        session = create_session_factory(engine)()
         session.execute(text("SELECT 1"))
         db_status = "connected"
         session.close()

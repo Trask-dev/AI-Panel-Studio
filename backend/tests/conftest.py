@@ -1,3 +1,7 @@
+# 必须在所有导入之前设置 —— 让 API get_db() 使用 :memory:
+import os
+os.environ["PYTEST_RUNNING"] = "1"
+
 """pytest 共享 fixtures。
 
 提供三个核心 fixture:

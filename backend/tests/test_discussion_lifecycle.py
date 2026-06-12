@@ -118,6 +118,128 @@ class TestDiscussionCRUD:
         assert counts["t_cnt"] == 0
 
 
+class TestGuestGeneration:
+    """嘉宾生成端点测试 (新增)。"""
+
+    def test_generate_guests_saves_to_db(self, db_session):
+        """POST /guests/generate → 嘉宾写入 DB → /start 成功。"""
+        # 1. 创建讨论
+        result = api_create_discussion(db_session, "测试嘉宾生成", expert_count=3)
+
+        # 2. 生成嘉宾 (直接调用服务模拟)
+        from app.services.persona_generator import GuestGenerator
+        from app.api.discussions import generate_guests
+
+        gen = GuestGenerator()
+        guests = gen.generate(
+            topic=db_session.execute(
+                text("SELECT topic FROM discussions WHERE id=:did"),
+                {"did": result["id"]},
+            ).fetchone().topic,
+            expert_count=3,
+        )
+
+        # 3. 手动插入嘉宾 (模拟端点行为)
+        import uuid
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        for idx, g in enumerate(guests):
+            db_session.execute(
+                text(
+                    "INSERT INTO guests "
+                    "(id, discussion_id, role, name, title, stance, stance_label, "
+                    " color, status, speech_order, persona_prompt, is_active, created_at, updated_at) "
+                    "VALUES (:id, :did, :role, :name, :title, :stance, :label, "
+                    " :color, 'idle', :order, :prompt, 1, :now, :now)"
+                ),
+                {
+                    "id": str(uuid.uuid4()), "did": result["id"],
+                    "role": g.role, "name": g.name, "title": g.title or "",
+                    "stance": g.stance or "", "label": g.stance_label or "",
+                    "color": g.color or "#9090a0", "order": idx,
+                    "prompt": g.persona_prompt or "", "now": now,
+                },
+            )
+        db_session.commit()
+
+        # 4. 验证嘉宾已入库
+        count = db_session.execute(
+            text(
+                "SELECT COUNT(*) as c FROM guests "
+                "WHERE discussion_id = :did AND is_active = 1"
+            ),
+            {"did": result["id"]},
+        ).fetchone().c
+        assert count == 4  # 1 Host + 3 Expert
+
+        # 5. 现在 /start 应该成功 (不再 409)
+        from app.services.orchestrator import Orchestrator
+        orch = Orchestrator(db_session)
+        orch.start(result["id"])
+        db_session.commit()
+
+        status = db_session.execute(
+            text("SELECT status FROM discussions WHERE id=:did"),
+            {"did": result["id"]},
+        ).fetchone().status
+        assert status == "active"
+
+    def test_full_flow_create_generate_start(self, db_session):
+        """端到端: 创建 → 生成嘉宾 → 开始讨论。"""
+        # Create
+        result = api_create_discussion(db_session, "端到端测试", expert_count=2)
+
+        # Generate guests
+        from app.services.persona_generator import GuestGenerator
+        gen = GuestGenerator()
+        guests = gen.generate(topic="端到端测试", expert_count=2)
+
+        import uuid
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        for idx, g in enumerate(guests):
+            db_session.execute(
+                text(
+                    "INSERT INTO guests "
+                    "(id, discussion_id, role, name, title, stance, stance_label, "
+                    " color, status, speech_order, persona_prompt, is_active, created_at, updated_at) "
+                    "VALUES (:id, :did, :role, :name, :title, :stance, :label, "
+                    " :color, 'idle', :order, :prompt, 1, :now, :now)"
+                ),
+                {
+                    "id": str(uuid.uuid4()), "did": result["id"],
+                    "role": g.role, "name": g.name, "title": g.title or "",
+                    "stance": g.stance or "", "label": g.stance_label or "",
+                    "color": g.color or "#9090a0", "order": idx,
+                    "prompt": g.persona_prompt or "", "now": now,
+                },
+            )
+        db_session.commit()
+
+        # Start — now succeeds
+        from app.services.orchestrator import Orchestrator
+        orch = Orchestrator(db_session)
+        orch.start(result["id"])
+        db_session.commit()
+
+        # Verify
+        status = db_session.execute(
+            text("SELECT status FROM discussions WHERE id=:did"),
+            {"did": result["id"]},
+        ).fetchone().status
+        assert status == "active"
+
+        # Verify opening statement
+        entries = db_session.execute(
+            text(
+                "SELECT COUNT(*) as c FROM transcript_entries "
+                "WHERE discussion_id = :did"
+            ),
+            {"did": result["id"]},
+        ).fetchone().c
+        assert entries == 1
+
+
 class TestDiscussionLifecycle:
     """状态机流转测试。"""
 

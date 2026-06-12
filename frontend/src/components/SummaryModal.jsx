@@ -1,14 +1,14 @@
 /**
  * SummaryModal — 主持人结语弹窗
  *
+ * 通过 isOpen 控制显隐，默认关闭。点击遮罩层或 ✕ 按钮关闭。
  * 从 discussionStore 读取 summary / isSummarizing / summaryError。
- * Loading 态模拟"主持人正在撰写总结"(2-3s 动效)。
  */
 
 import React from "react";
 import { useDiscussionStore } from "../stores/discussionStore";
 
-export function SummaryModal({ onClose }) {
+export function SummaryModal({ isOpen = false, onClose }) {
   const summary = useDiscussionStore((s) => s.summary);
   const isSummarizing = useDiscussionStore((s) => s.isSummarizing);
   const summaryError = useDiscussionStore((s) => s.summaryError);
@@ -19,35 +19,54 @@ export function SummaryModal({ onClose }) {
     if (meta.id) generateSummary(meta.id);
   };
 
+  const handleClose = () => {
+    if (onClose) onClose();
+  };
+
+  const handleOverlayClick = (e) => {
+    // 点击遮罩层（非弹窗内容区域）关闭
+    if (e.target === e.currentTarget) {
+      handleClose();
+    }
+  };
+
+  // Bug 修复 1: isOpen 控制显隐，默认 false 不显示
+  if (!isOpen) return null;
+
   return (
-    <div className="summary-modal-overlay" data-testid="summary-modal">
-      <div className="summary-modal">
-        {/* Header */}
+    <div
+      className="summary-modal-overlay"
+      data-testid="summary-modal"
+      onClick={handleOverlayClick}
+      style={{ display: "flex" }}
+    >
+      <div className="summary-modal" onClick={(e) => e.stopPropagation()}>
+        {/* Header — Bug 修复 2: 关闭按钮始终渲染 */}
         <div className="summary-modal__header">
           <h2 className="summary-modal__title">📋 主持人结语</h2>
-          {onClose && (
-            <button className="summary-modal__close" onClick={onClose} aria-label="关闭">
-              ✕
-            </button>
-          )}
+          <button
+            className="summary-modal__close"
+            onClick={handleClose}
+            aria-label="关闭"
+            type="button"
+            style={{ position: "relative", zIndex: 101 }}
+          >
+            ✕
+          </button>
         </div>
 
         {/* Body */}
         <div className="summary-modal__body">
-          {/* Loading 态 */}
           {isSummarizing && (
             <div className="summary-loading" data-testid="summary-loading">
               <div className="summary-loading__spinner" />
-              <p className="summary-loading__text">
-                主持人正在撰写总结，请稍候...
-              </p>
+              <p className="summary-loading__text">主持人正在撰写总结，请稍候...</p>
               <p className="summary-loading__hint">
                 正在基于 {meta.roundCount} 轮讨论内容进行综合提炼
               </p>
             </div>
           )}
 
-          {/* Error 态 */}
           {summaryError && !isSummarizing && (
             <div className="summary-error" data-testid="summary-error">
               <p>⚠️ {summaryError}</p>
@@ -57,7 +76,6 @@ export function SummaryModal({ onClose }) {
             </div>
           )}
 
-          {/* 无总结时 → 生成按钮 */}
           {!summary && !isSummarizing && !summaryError && (
             <div className="summary-empty" data-testid="summary-empty">
               <p>讨论已结束，是否生成主持人结语？</p>
@@ -71,7 +89,6 @@ export function SummaryModal({ onClose }) {
             </div>
           )}
 
-          {/* 总结内容 */}
           {summary && !isSummarizing && (
             <div className="summary-content" data-testid="summary-content">
               <div className="summary-section">
@@ -91,7 +108,7 @@ export function SummaryModal({ onClose }) {
 }
 
 // ---------------------------------------------------------------------------
-// 简易 Markdown → HTML (仅处理标题和段落)
+// 简易 Markdown → HTML
 // ---------------------------------------------------------------------------
 function markdownToHtml(md) {
   return md

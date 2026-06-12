@@ -17,13 +17,43 @@ describe("SummaryModal", () => {
     vi.clearAllMocks();
   });
 
+  it("renders nothing when isOpen is false (default)", () => {
+    useDiscussionStore.setState({ summary: { id: "s1", content: "xx", discussion_id: "d1" } });
+
+    render(<SummaryModal />);
+    expect(screen.queryByTestId("summary-modal")).not.toBeInTheDocument();
+  });
+
+  it("renders when isOpen is true", () => {
+    render(<SummaryModal isOpen />);
+    expect(screen.getByTestId("summary-modal")).toBeInTheDocument();
+  });
+
+  it("calls onClose when X button clicked", () => {
+    const onClose = vi.fn();
+    useDiscussionStore.setState({ summary: { id: "s1", content: "xx", discussion_id: "d1" } });
+
+    render(<SummaryModal isOpen onClose={onClose} />);
+    fireEvent.click(screen.getByLabelText("关闭"));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("calls onClose when overlay clicked", () => {
+    const onClose = vi.fn();
+    useDiscussionStore.setState({ summary: { id: "s1", content: "xx", discussion_id: "d1" } });
+
+    render(<SummaryModal isOpen onClose={onClose} />);
+    fireEvent.click(screen.getByTestId("summary-modal"));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it("renders generate button when no summary exists", () => {
     useDiscussionStore.getState().initDiscussion(
       { id: "d1", topic: "测试", status: "finished", round_count: 3, max_rounds: 5 },
       []
     );
 
-    render(<SummaryModal />);
+    render(<SummaryModal isOpen />);
     expect(screen.getByTestId("generate-summary-btn")).toBeInTheDocument();
     expect(screen.getByText("📝 生成总结")).toBeInTheDocument();
   });
@@ -31,7 +61,7 @@ describe("SummaryModal", () => {
   it("shows loading state when summarizing", () => {
     useDiscussionStore.setState({ isSummarizing: true });
 
-    render(<SummaryModal />);
+    render(<SummaryModal isOpen />);
     expect(screen.getByTestId("summary-loading")).toBeInTheDocument();
     expect(
       screen.getByText("主持人正在撰写总结，请稍候...")
@@ -44,7 +74,7 @@ describe("SummaryModal", () => {
       isSummarizing: false,
     });
 
-    render(<SummaryModal />);
+    render(<SummaryModal isOpen />);
     expect(screen.getByTestId("summary-error")).toBeInTheDocument();
     expect(screen.getByText(/LLM 调用超时/)).toBeInTheDocument();
   });
@@ -58,7 +88,7 @@ describe("SummaryModal", () => {
       },
     });
 
-    render(<SummaryModal />);
+    render(<SummaryModal isOpen />);
     expect(screen.getByTestId("summary-content")).toBeInTheDocument();
     expect(screen.getByText(/精彩的总结/)).toBeInTheDocument();
   });

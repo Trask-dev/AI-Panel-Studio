@@ -1,0 +1,678 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Panel Studio — 演播厅 · 布局骨架</title>
+
+  <!-- CSS 加载顺序：reset → tokens → layout → components → animations → responsive -->
+  <link rel="stylesheet" href="css/reset.css">
+  <link rel="stylesheet" href="css/tokens.css">
+  <link rel="stylesheet" href="css/layout.css">
+  <link rel="stylesheet" href="css/components.css">
+  <link rel="stylesheet" href="css/animations.css">
+  <link rel="stylesheet" href="css/responsive.css">
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+</head>
+<body>
+
+  <!-- ====================================================================
+       .app — 顶层容器 (100vh, Flex 纵向, overflow: hidden)
+       ==================================================================== -->
+  <div class="app">
+
+    <!-- ================================================================
+         ZONE 1 — .app-header (固定 56px, 三栏 Flex)
+         左: Logo · 中: 话题+状态+轮次 · 右: 操作按钮
+         ================================================================ -->
+    <header class="app-header">
+      <!-- 左栏: 品牌标识 -->
+      <div class="app-header__left">
+        <a href="/" class="app-logo">
+          <span class="app-logo__icon">🎬</span>
+          <span class="app-logo__text">AI Panel Studio</span>
+        </a>
+      </div>
+
+      <!-- 中栏: 讨论信息 -->
+      <div class="app-header__center">
+        <h1 class="discussion-topic">AI会取代人类工作吗</h1>
+        <span class="status-badge status-badge--active">● Active</span>
+        <span class="round-indicator">Round <strong>8</strong> / 10</span>
+      </div>
+
+      <!-- 右栏: 操作按钮 -->
+      <div class="app-header__right">
+        <button class="btn btn--ghost">⚙️</button>
+        <button class="btn btn--secondary">导出总结</button>
+        <button class="btn btn--primary">结束讨论</button>
+      </div>
+    </header>
+
+    <!-- ================================================================
+         .studio-view — 剩余高度 (Flex: 1)
+         ================================================================ -->
+    <main class="studio-view">
+
+      <!-- ==============================================================
+           ZONE 2 — .studio-stage (35%)
+           暗色背景 + 径向光晕 + 主持人居中 + 专家 Flex 行排列
+           ============================================================== -->
+      <section class="studio-stage">
+        <!-- 背景光晕层 (纯 CSS, 无 DOM 内容) -->
+        <div class="stage-lighting" aria-hidden="true"></div>
+
+        <!-- 主持人区: 居中 + speaking 状态 (演示辉光) -->
+        <div class="stage-host-area">
+          <div class="guest-card guest-card--host guest-card--speaking"
+               style="--guest-color: var(--color-host)">
+            <div class="guest-card__avatar">
+              <div class="guest-avatar" style="--guest-color: var(--color-host)">张</div>
+              <span class="guest-role-badge guest-role-badge--host">🎤 主持</span>
+            </div>
+            <div class="guest-card__info">
+              <h3 class="guest-name">张明远</h3>
+              <p class="guest-title">资深科技记者</p>
+            </div>
+            <div class="guest-card__status">
+              <span class="guest-status guest-status--speaking">● 发言中</span>
+            </div>
+            <!-- thinking 态思考气泡 (默认隐藏, Step 8 动效后可见) -->
+            <div class="thinking-bubble" style="--guest-color: var(--color-host)">
+              <p class="thinking-bubble__text">正在串联各方观点，准备引导下一轮讨论...</p>
+              <div class="thinking-bubble__confidence">
+                <span class="confidence-label">确信度</span>
+                <span class="confidence-bar">
+                  <span class="confidence-bar__fill" style="--confidence: 0.92"></span>
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 专家区: Flex 行, 可换行, 展示不同状态 -->
+        <div class="stage-experts-row">
+
+          <!-- 专家 1: thinking 状态 -->
+          <div class="guest-card guest-card--expert guest-card--thinking"
+               style="--guest-color: var(--color-expert-0)">
+            <div class="guest-card__avatar">
+              <div class="guest-avatar" style="--guest-color: var(--color-expert-0)">李</div>
+              <span class="guest-stance-label" style="--guest-color: var(--color-expert-0)">乐观派</span>
+            </div>
+            <div class="guest-card__info">
+              <h3 class="guest-name">李思涵</h3>
+              <p class="guest-title">AI研究员</p>
+            </div>
+            <div class="guest-card__status">
+              <span class="guest-status guest-status--thinking">◉ 思考中</span>
+            </div>
+            <div class="thinking-bubble" style="--guest-color: var(--color-expert-0)">
+              <p class="thinking-bubble__text">正在组织关于就业市场弹性的数据，准备反驳王建国的论点...</p>
+              <div class="thinking-bubble__confidence">
+                <span class="confidence-label">确信度</span>
+                <span class="confidence-bar">
+                  <span class="confidence-bar__fill" style="--confidence: 0.78"></span>
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 专家 2: idle 状态 -->
+          <div class="guest-card guest-card--expert"
+               style="--guest-color: var(--color-expert-1)">
+            <div class="guest-card__avatar">
+              <div class="guest-avatar" style="--guest-color: var(--color-expert-1)">王</div>
+              <span class="guest-stance-label" style="--guest-color: var(--color-expert-1)">谨慎派</span>
+            </div>
+            <div class="guest-card__info">
+              <h3 class="guest-name">王建国</h3>
+              <p class="guest-title">劳动经济学家</p>
+            </div>
+            <div class="guest-card__status">
+              <span class="guest-status guest-status--idle">● 待机</span>
+            </div>
+          </div>
+
+          <!-- 专家 3: waiting 状态 -->
+          <div class="guest-card guest-card--expert guest-card--waiting"
+               style="--guest-color: var(--color-expert-2)">
+            <div class="guest-card__avatar">
+              <div class="guest-avatar" style="--guest-color: var(--color-expert-2)">陈</div>
+              <span class="guest-stance-label" style="--guest-color: var(--color-expert-2)">务实派</span>
+            </div>
+            <div class="guest-card__info">
+              <h3 class="guest-name">陈雪梅</h3>
+              <p class="guest-title">政策咨询顾问</p>
+            </div>
+            <div class="guest-card__status">
+              <span class="guest-status guest-status--waiting">◐ 冷却中</span>
+            </div>
+            <!-- waiting 冷却指示器 -->
+            <div class="cooldown-indicator">
+              <span class="cooldown-icon">⏳</span>
+              <span class="cooldown-text">12s</span>
+            </div>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- ==============================================================
+           .studio-bottom — 65%, CSS Grid 双栏
+           ============================================================== -->
+      <div class="studio-bottom">
+
+        <!-- ZONE 3A — .live-transcript (1fr) · Step 6 -->
+        <section class="live-transcript">
+          <!-- 顶部控制栏 -->
+          <div class="transcript-header">
+            <h2 class="transcript-header__title">📝 现场转录</h2>
+            <div class="transcript-header__controls">
+              <span class="auto-scroll-badge auto-scroll-badge--on">▼ 自动滚动</span>
+            </div>
+          </div>
+
+          <!-- 消息列表 (独立滚动) -->
+          <div class="transcript-entries">
+
+            <!-- Round 1 开场 -->
+            <div class="transcript-round-divider"><span>── 第 1 轮 ──</span></div>
+
+            <!-- 主持人开场白 -->
+            <div class="transcript-entry" style="--guest-color: var(--color-host)">
+              <div class="transcript-entry__bar"></div>
+              <div class="transcript-entry__body">
+                <div class="transcript-entry__header">
+                  <span class="entry-speaker" style="--guest-color: var(--color-host)">张明远</span>
+                  <span class="entry-role">主持人</span>
+                  <span class="entry-type-icon">🎤</span>
+                  <span class="entry-type-label">开场白</span>
+                </div>
+                <p class="entry-content">欢迎各位来到今天的圆桌讨论。我们今天的主题是「AI会取代人类工作吗」。这是一个关乎每个人切身利益的话题——从工厂流水线到高级白领岗位，AI的能力边界正在以前所未有的速度扩展。让我们先听听各位专家的立场。李思涵老师，您是AI研究员，您怎么看？</p>
+                <span class="entry-time">2 分钟前</span>
+              </div>
+            </div>
+
+            <!-- 专家1 立场陈述 -->
+            <div class="transcript-entry" style="--guest-color: var(--color-expert-0)">
+              <div class="transcript-entry__bar"></div>
+              <div class="transcript-entry__body">
+                <div class="transcript-entry__header">
+                  <span class="entry-speaker" style="--guest-color: var(--color-expert-0)">李思涵</span>
+                  <span class="entry-role">AI研究员</span>
+                  <span class="entry-type-icon">🗣️</span>
+                  <span class="entry-type-label">立场陈述</span>
+                </div>
+                <p class="entry-content">回顾工业革命以来，每次重大技术变革都会带来短期就业冲击，但长期看创造的工作机会远超消灭的。蒸汽机淘汰了纺织工，但催生了铁路和机械制造行业。计算机淘汰了打字员，但创造了整个IT产业。我相信AI也将遵循这一规律——它会取代某些重复性认知工作，但更会催生我们今天还无法命名的新职业。</p>
+                <span class="entry-time">1 分钟前</span>
+              </div>
+            </div>
+
+            <!-- 专家2 立场陈述 -->
+            <div class="transcript-entry" style="--guest-color: var(--color-expert-1)">
+              <div class="transcript-entry__bar"></div>
+              <div class="transcript-entry__body">
+                <div class="transcript-entry__header">
+                  <span class="entry-speaker" style="--guest-color: var(--color-expert-1)">王建国</span>
+                  <span class="entry-role">劳动经济学家</span>
+                  <span class="entry-type-icon">🗣️</span>
+                  <span class="entry-type-label">立场陈述</span>
+                </div>
+                <p class="entry-content">我必须指出这个类比的缺陷。工业革命和计算机革命影响的主要是体力劳动和简单文书工作，而这一波生成式AI浪潮瞄准的恰恰是高技能白领工作——法律文书、编程、翻译、平面设计。这不是「旧工作消失、新工作出现」的简单循环，而是技能断层危机。</p>
+                <span class="entry-time">1 分钟前</span>
+              </div>
+            </div>
+
+            <!-- Round 2 -->
+            <div class="transcript-round-divider"><span>── 第 2 轮 ──</span></div>
+
+            <!-- 主持人提问 -->
+            <div class="transcript-entry" style="--guest-color: var(--color-host)">
+              <div class="transcript-entry__bar"></div>
+              <div class="transcript-entry__body">
+                <div class="transcript-entry__header">
+                  <span class="entry-speaker" style="--guest-color: var(--color-host)">张明远</span>
+                  <span class="entry-role">主持人</span>
+                  <span class="entry-type-icon">❓</span>
+                  <span class="entry-type-label">提问</span>
+                </div>
+                <p class="entry-content">王建国老师提到技能断层危机，这是一个非常现实的问题。我想追问一下：您认为哪些行业会最先受到冲击？</p>
+                <span class="entry-time">刚刚</span>
+              </div>
+            </div>
+
+            <!-- 专家2 回答 -->
+            <div class="transcript-entry" style="--guest-color: var(--color-expert-1)">
+              <div class="transcript-entry__bar"></div>
+              <div class="transcript-entry__body">
+                <div class="transcript-entry__header">
+                  <span class="entry-speaker" style="--guest-color: var(--color-expert-1)">王建国</span>
+                  <span class="entry-role">劳动经济学家</span>
+                  <span class="entry-type-icon">💬</span>
+                  <span class="entry-type-label">回答</span>
+                </div>
+                <p class="entry-content">最直接的是翻译和客服行业。去年某大型翻译公司的营收下降了40%，因为客户转向了AI翻译工具。其次是初级编程——GitHub Copilot已经能够完成约30%的编码任务。还有法律文书审核、初级财务分析、内容撰写等领域。</p>
+                <span class="entry-time">刚刚</span>
+              </div>
+            </div>
+
+            <!-- 流式消息: 专家1 正在反驳 -->
+            <div class="transcript-entry transcript-entry--streaming"
+                 style="--guest-color: var(--color-expert-0)">
+              <div class="transcript-entry__bar transcript-entry__bar--streaming"></div>
+              <div class="transcript-entry__body">
+                <div class="transcript-entry__header">
+                  <span class="entry-speaker" style="--guest-color: var(--color-expert-0)">李思涵</span>
+                  <span class="entry-role">AI研究员</span>
+                  <span class="entry-type-icon">↩️</span>
+                  <span class="entry-type-label">反驳</span>
+                  <span class="streaming-badge">正在发言</span>
+                </div>
+                <p class="entry-content streaming-content">
+                  我需要纠正一个认知偏差。AI翻译确实能完成大部分日常翻译任务，但高端法律翻译、文学翻译、同声传译的需求反而在增长——因为人们意识到了AI翻译的局限性。
+                  <span class="streaming-cursor">█</span>
+                </p>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- 回到底部浮动按钮 -->
+          <button class="scroll-to-bottom" title="回到底部">
+            <span class="scroll-to-bottom__icon">↓</span>
+            <span class="scroll-to-bottom__badge">3</span>
+          </button>
+        </section>
+
+        <!-- ZONE 3B — .analysis-panel (360px) · Step 7 -->
+        <aside class="analysis-panel">
+
+          <!-- 纯 CSS Tab 切换: 隐藏 radio 控制显示 -->
+          <input type="radio" name="panel-tab" id="tab-consensus" class="panel-tab-radio" checked>
+          <input type="radio" name="panel-tab" id="tab-divergence" class="panel-tab-radio">
+
+          <!-- Tab 导航 -->
+          <div class="panel-tabs">
+            <label for="tab-consensus" class="panel-tab panel-tab--consensus">
+              <span class="panel-tab__icon">✅</span>
+              <span class="panel-tab__label">共识</span>
+              <span class="panel-tab__count">3</span>
+            </label>
+            <label for="tab-divergence" class="panel-tab panel-tab--divergence">
+              <span class="panel-tab__icon">⚡</span>
+              <span class="panel-tab__label">分歧</span>
+              <span class="panel-tab__count">2</span>
+            </label>
+          </div>
+
+          <!-- ================================================================
+               共识面板 (tab-consensus 选中时显示)
+               ================================================================ -->
+          <div class="panel-content" id="panel-consensus">
+
+            <!-- 共识卡片 1 -->
+            <div class="consensus-card">
+              <div class="consensus-card__header">
+                <span class="consensus-icon">✅</span>
+                <span class="consensus-confidence">95%</span>
+              </div>
+              <p class="consensus-card__content">各方均认同 AI 监管需要分级制度，不能一刀切地鼓励或禁止</p>
+              <div class="consensus-card__guests">
+                <span class="consensus-guest-dot" style="--dot-color: var(--color-expert-0)" title="李思涵">李</span>
+                <span class="consensus-guest-dot" style="--dot-color: var(--color-expert-1)" title="王建国">王</span>
+                <span class="consensus-guest-dot" style="--dot-color: var(--color-expert-2)" title="陈雪梅">陈</span>
+                <span class="consensus-guest-label">李思涵 · 王建国 · 陈雪梅</span>
+              </div>
+              <div class="consensus-bar">
+                <div class="consensus-bar__fill" style="--fill: 0.95"></div>
+              </div>
+              <div class="consensus-card__meta">
+                <span>首次确认: 第 3 轮</span>
+                <span>·</span>
+                <span>最近强化: 2 分钟前</span>
+              </div>
+            </div>
+
+            <!-- 共识卡片 2 -->
+            <div class="consensus-card">
+              <div class="consensus-card__header">
+                <span class="consensus-icon">✅</span>
+                <span class="consensus-confidence">85%</span>
+              </div>
+              <p class="consensus-card__content">教育体系需要从「知识传授」转向「学习能力培养」</p>
+              <div class="consensus-card__guests">
+                <span class="consensus-guest-dot" style="--dot-color: var(--color-expert-0)" title="李思涵">李</span>
+                <span class="consensus-guest-dot" style="--dot-color: var(--color-expert-1)" title="王建国">王</span>
+                <span class="consensus-guest-label">李思涵 · 王建国</span>
+              </div>
+              <div class="consensus-bar">
+                <div class="consensus-bar__fill" style="--fill: 0.85"></div>
+              </div>
+              <div class="consensus-card__meta">
+                <span>首次确认: 第 4 轮</span>
+                <span>·</span>
+                <span>最近强化: 5 分钟前</span>
+              </div>
+            </div>
+
+            <!-- 共识卡片 3 (已被推翻) -->
+            <div class="consensus-card consensus-card--inactive">
+              <div class="consensus-card__header">
+                <span class="consensus-icon">❌</span>
+                <span class="consensus-confidence">—</span>
+              </div>
+              <p class="consensus-card__content">AI 的发展速度不应受到人为限制（已被后续讨论推翻）</p>
+              <div class="consensus-card__guests">
+                <span class="consensus-guest-dot consensus-guest-dot--inactive" style="--dot-color: var(--color-expert-0)" title="李思涵">李</span>
+                <span class="consensus-guest-label consensus-guest-label--inactive">共识已失效</span>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- ================================================================
+               分歧面板 (tab-divergence 选中时显示)
+               ================================================================ -->
+          <div class="panel-content" id="panel-divergence">
+
+            <!-- 分歧卡片 1: sharp -->
+            <div class="divergence-card">
+              <div class="divergence-card__header">
+                <span class="divergence-icon">⚡</span>
+                <span class="severity-badge severity-badge--sharp">sharp</span>
+              </div>
+              <p class="divergence-card__content">关于 AI 对就业的最终净影响存在根本性分歧</p>
+              <div class="divergence-parties">
+                <!-- 乐观方 -->
+                <div class="divergence-party">
+                  <div class="divergence-party__header">
+                    <span class="divergence-party__label">乐观派</span>
+                    <span class="divergence-party__count">1 人</span>
+                  </div>
+                  <div class="divergence-party__bar">
+                    <div class="divergence-party__fill"
+                         style="--fill: 0.33; --bar-color: var(--color-expert-0)"></div>
+                  </div>
+                  <span class="divergence-party__guest" style="--guest-color: var(--color-expert-0)">李思涵</span>
+                </div>
+                <!-- 谨慎方 -->
+                <div class="divergence-party">
+                  <div class="divergence-party__header">
+                    <span class="divergence-party__label">谨慎派</span>
+                    <span class="divergence-party__count">2 人</span>
+                  </div>
+                  <div class="divergence-party__bar">
+                    <div class="divergence-party__fill"
+                         style="--fill: 0.67; --bar-color: var(--color-expert-1)"></div>
+                  </div>
+                  <span class="divergence-party__guest" style="--guest-color: var(--color-expert-1)">王建国</span>
+                  <span class="divergence-party__guest" style="--guest-color: var(--color-expert-2)">陈雪梅</span>
+                </div>
+              </div>
+              <div class="divergence-card__meta">
+                <span>首次识别: 第 2 轮</span>
+                <span>·</span>
+                <span>尚未化解</span>
+              </div>
+            </div>
+
+            <!-- 分歧卡片 2: moderate (已化解) -->
+            <div class="divergence-card divergence-card--resolved">
+              <div class="divergence-card__header">
+                <span class="divergence-icon">🏳️</span>
+                <span class="severity-badge severity-badge--moderate">moderate</span>
+                <span class="resolved-tag">已化解</span>
+              </div>
+              <p class="divergence-card__content">关于技术红利税的可行性存在分歧</p>
+              <div class="divergence-card__resolution">
+                <span>化解说明: 双方同意搁置争议，等待更多实证数据</span>
+              </div>
+            </div>
+
+          </div>
+
+        </aside>
+
+      </div>
+
+    </main>
+
+  </div>
+
+  <!-- ========================================================================
+       DiscussionList — 首页讨论列表 (Step 10)
+       独立视图。演示状态: display:none (默认隐藏演播厅时切换至此)。
+       ======================================================================== -->
+  <div class="discussion-list-view" style="display: none;">
+    <header class="app-header">
+      <div class="app-header__left">
+        <a href="/" class="app-logo">
+          <span class="app-logo__icon">🎬</span>
+          <span class="app-logo__text">AI Panel Studio</span>
+        </a>
+      </div>
+      <div class="app-header__right">
+        <button class="btn btn--primary">+ 新建讨论</button>
+      </div>
+    </header>
+
+    <main class="discussion-grid">
+
+      <!-- 卡片 1: active -->
+      <article class="discussion-card" style="--card-accent: var(--success)">
+        <div class="discussion-card__accent"></div>
+        <div class="discussion-card__body">
+          <div class="discussion-card__header">
+            <span class="discussion-status discussion-status--active">● 进行中</span>
+            <span class="discussion-round">Round 8 / 10</span>
+          </div>
+          <h3 class="discussion-card__title">AI会取代人类工作吗</h3>
+          <p class="discussion-card__desc">探讨人工智能对未来10年就业市场的深远影响，聚焦白领工作自动化、新职业催生与技能重塑</p>
+          <div class="discussion-card__meta">
+            <span>🎤 张明远 主持</span>
+            <span>👥 4 位嘉宾</span>
+          </div>
+          <div class="discussion-card__footer">
+            <div class="discussion-card__stats">
+              <span>💬 34 条发言</span>
+              <span>✅ 3 共识</span>
+              <span>⚡ 2 分歧</span>
+            </div>
+            <span class="discussion-time">🕐 1 小时前</span>
+          </div>
+        </div>
+      </article>
+
+      <!-- 卡片 2: setup -->
+      <article class="discussion-card" style="--card-accent: var(--text-muted)">
+        <div class="discussion-card__accent"></div>
+        <div class="discussion-card__body">
+          <div class="discussion-card__header">
+            <span class="discussion-status discussion-status--setup">● 配置中</span>
+            <span class="discussion-round">未开始</span>
+          </div>
+          <h3 class="discussion-card__title">量子计算何时能商用化</h3>
+          <p class="discussion-card__desc">讨论量子计算从实验室到产业化的关键瓶颈，以及未来5-10年的商业化路径</p>
+          <div class="discussion-card__meta">
+            <span>🎤 陈道明 主持</span>
+            <span>👥 5 位嘉宾</span>
+          </div>
+          <div class="discussion-card__footer">
+            <span class="discussion-time">🕐 10 分钟前</span>
+          </div>
+        </div>
+      </article>
+
+      <!-- 卡片 3: finished -->
+      <article class="discussion-card" style="--card-accent: var(--info)">
+        <div class="discussion-card__accent"></div>
+        <div class="discussion-card__body">
+          <div class="discussion-card__header">
+            <span class="discussion-status discussion-status--finished">● 已结束</span>
+            <span class="discussion-round">12 轮完成</span>
+          </div>
+          <h3 class="discussion-card__title">是否应该实施全民基本收入</h3>
+          <p class="discussion-card__desc">从经济可行性、社会公平、劳动力市场影响等角度，深入辩论全民基本收入(UBI)的利弊</p>
+          <div class="discussion-card__meta">
+            <span>🎤 林婉清 主持</span>
+            <span>👥 4 位嘉宾</span>
+          </div>
+          <div class="discussion-card__footer">
+            <div class="discussion-card__stats">
+              <span>💬 25 条发言</span>
+              <span>✅ 2 共识</span>
+              <span>⚡ 1 分歧</span>
+            </div>
+            <span class="discussion-time">🕐 1 天前</span>
+          </div>
+        </div>
+      </article>
+
+      <!-- 卡片 4: summarizing -->
+      <article class="discussion-card" style="--card-accent: var(--warning)">
+        <div class="discussion-card__accent"></div>
+        <div class="discussion-card__body">
+          <div class="discussion-card__header">
+            <span class="discussion-status discussion-status--summarizing">● 总结中</span>
+            <span class="discussion-round">Round 6 / 6</span>
+          </div>
+          <h3 class="discussion-card__title">人工智能伦理边界在哪里</h3>
+          <p class="discussion-card__desc">从隐私、偏见、问责到自主武器系统，全面审视AI发展中的伦理红线与社会共识</p>
+          <div class="discussion-card__meta">
+            <span>🎤 张明远 主持</span>
+            <span>👥 3 位嘉宾</span>
+          </div>
+          <div class="discussion-card__footer">
+            <div class="discussion-card__stats">
+              <span>💬 28 条发言</span>
+              <span>⏳ 生成总结中...</span>
+            </div>
+            <span class="discussion-time">🕐 3 小时前</span>
+          </div>
+        </div>
+      </article>
+
+    </main>
+  </div>
+
+  <!-- ========================================================================
+       SummaryModal — 讨论总结弹窗 (Step 9)
+       独立于 .app 之外的 fixed overlay，默认隐藏。
+       演示状态: 直接可见 (讨论结束后由 JS 控制显示/隐藏)。
+       ======================================================================== -->
+  <div class="summary-modal-overlay" style="display: none;">
+    <div class="summary-modal" role="dialog" aria-labelledby="summary-title">
+
+      <!-- 弹窗头部 -->
+      <div class="summary-modal__header">
+        <h2 class="summary-modal__title" id="summary-title">📋 讨论总结</h2>
+        <button class="summary-modal__close" aria-label="关闭">✕</button>
+      </div>
+
+      <!-- 弹窗主体 (独立滚动) -->
+      <div class="summary-modal__body">
+
+        <!-- 总结全文 -->
+        <div class="summary-section">
+          <h3 class="summary-section__title">📝 总结全文</h3>
+          <div class="summary-section__content">
+            <p>本次讨论围绕「是否应该实施全民基本收入」展开了多维度深入辩论。三位专家从经济学、财政可持续性和社会政策角度进行了激烈的观点交锋。</p>
+            <p>主持人林婉清引导讨论从理论基础逐步深入到中国具体情境，最终各方在「渐进式试点」这一中间路径上找到了最大公约数——尽管对试点的速度和规模仍存在分歧。</p>
+            <p>核心结论是：UBI是AI时代值得认真对待的政策工具，但其财务可行性和政治可接受性仍需通过长期试点来验证。</p>
+          </div>
+        </div>
+
+        <!-- 关键发现 -->
+        <div class="summary-section">
+          <h3 class="summary-section__title">🔑 关键发现</h3>
+          <ul class="summary-key-findings">
+            <li class="summary-key-finding">
+              <span class="finding-marker">01</span>
+              <span>UBI试点证据表明它能有效减少贫困和焦虑，不会导致大规模「躺平」</span>
+            </li>
+            <li class="summary-key-finding">
+              <span class="finding-marker">02</span>
+              <span>财务可行性是UBI面临的最大挑战，净成本约为GDP的3-4%</span>
+            </li>
+            <li class="summary-key-finding">
+              <span class="finding-marker">03</span>
+              <span>中国具有数字基础设施和「政策沙盒」的独特制度优势</span>
+            </li>
+            <li class="summary-key-finding">
+              <span class="finding-marker">04</span>
+              <span>渐进式UBI方案获得了最大程度的跨立场共识</span>
+            </li>
+          </ul>
+        </div>
+
+        <!-- 嘉宾贡献 -->
+        <div class="summary-section">
+          <h3 class="summary-section__title">👥 嘉宾贡献</h3>
+          <div class="summary-contributors">
+            <!-- 主持人 -->
+            <div class="summary-contributor">
+              <div class="contributor-avatar" style="--guest-color: var(--color-host)">林</div>
+              <div class="contributor-info">
+                <div class="contributor-header">
+                  <span class="contributor-name">林婉清</span>
+                  <span class="contributor-role">主持人</span>
+                </div>
+                <p class="contributor-note">引导讨论从理论基础到中国情境的深入，提出了AI时代UBI逻辑基础的根本变化</p>
+              </div>
+            </div>
+            <!-- 专家 1 -->
+            <div class="summary-contributor">
+              <div class="contributor-avatar" style="--guest-color: var(--color-expert-0)">沈</div>
+              <div class="contributor-info">
+                <div class="contributor-header">
+                  <span class="contributor-name">沈一诺</span>
+                  <span class="contributor-role">发展经济学家 · 支持UBI</span>
+                </div>
+                <p class="contributor-note">系统引用了全球UBI试点的实证证据，提出通过累进财富税和碳税为UBI提供资金</p>
+              </div>
+            </div>
+            <!-- 专家 2 -->
+            <div class="summary-contributor">
+              <div class="contributor-avatar" style="--guest-color: var(--color-expert-1)">钱</div>
+              <div class="contributor-info">
+                <div class="contributor-header">
+                  <span class="contributor-name">钱伟成</span>
+                  <span class="contributor-role">财政政策分析师 · 反对UBI</span>
+                </div>
+                <p class="contributor-note">以16.8万亿数据论证全面UBI的财务不可持续性，强调税收征管与地下经济的现实挑战</p>
+              </div>
+            </div>
+            <!-- 专家 3 -->
+            <div class="summary-contributor">
+              <div class="contributor-avatar" style="--guest-color: var(--color-expert-2)">郑</div>
+              <div class="contributor-info">
+                <div class="contributor-header">
+                  <span class="contributor-name">郑佳慧</span>
+                  <span class="contributor-role">自动化与社会变革研究员 · 渐进改革派</span>
+                </div>
+                <p class="contributor-note">提出了「渐进式UBI」的中间路径，强调中国「政策沙盒」的制度优势</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 生成信息 -->
+        <div class="summary-modal__footer">
+          <span>生成模型: claude-sonnet-4-20250514</span>
+          <span>·</span>
+          <span>Token 消耗: 12,500 in / 2,800 out</span>
+          <span>·</span>
+          <span>生成耗时: 4.2s</span>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>

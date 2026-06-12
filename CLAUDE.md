@@ -16,7 +16,7 @@ You are operating under the "Superpowers" engineering framework for this project
 - Use TypeScript interfaces to enforce contracts.
 - Ensure UI components are decoupled from business logic.
 
-### Phase 3: TDD (Test Driven Development) - CURRENT PHASE
+### Phase 3: TDD (Test Driven Development)
 - Write tests BEFORE or ALONGSIDE implementation.
 - Use Vitest/Jest for unit tests.
 - Ensure high coverage for core logic (AI generation, consensus algorithms).

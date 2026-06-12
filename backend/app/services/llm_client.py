@@ -1,15 +1,10 @@
 """LLM Client — 大模型调用抽象层。
 
 支持:
+  - Deepseek V4 (OpenAI 兼容 API)
   - 异步调用 (async/await)
   - 超时控制 (默认 30s)
   - 自动重试 (默认 1 次, 指数退避)
-  - Mock 注入 (测试模式)
-
-用法:
-  client = LLMClient(api_key="...", model="claude-sonnet-4-20250514")
-  response = await client.generate(prompt)
-  response = client.generate_sync(prompt)   # 同步便捷方法
 """
 
 import asyncio
@@ -21,8 +16,8 @@ class LLMClient:
     """LLM API 调用客户端。
 
     Args:
-        api_key: LLM 服务 API Key (从环境变量读取)。
-        model: 模型标识。
+        api_key: LLM 服务 API Key。
+        model: 模型标识 (deepseek-chat, deepseek-reasoner 等)。
         base_url: API 基础 URL。
         timeout: 单次请求超时秒数。
         max_retries: 失败后最大重试次数 (0 = 不重试)。
@@ -31,17 +26,17 @@ class LLMClient:
     def __init__(
         self,
         api_key: str = "",
-        model: str = "claude-sonnet-4-20250514",
-        base_url: str = "https://api.anthropic.com/v1",
+        model: str = "deepseek-chat",
+        base_url: str = "https://api.deepseek.com/v1",
         timeout: float = 30.0,
         max_retries: int = 1,
     ):
         self.api_key = api_key
         self.model = model
-        self.base_url = base_url
+        self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.max_retries = max_retries
-        self._call_count = 0          # 测试用: 记录调用次数
+        self._call_count = 0
         self._last_prompt: Optional[str] = None
 
     # -------------------------------------------------------------------------
@@ -49,22 +44,12 @@ class LLMClient:
     # -------------------------------------------------------------------------
 
     async def generate(self, prompt: str) -> str:
-        """异步调用 LLM 生成响应。
-
-        Args:
-            prompt: 提示词文本。
-
-        Returns:
-            LLM 生成的原始文本响应。
-
-        Raises:
-            RuntimeError: 所有重试均失败后抛出。
-        """
+        """异步调用 LLM 生成响应。"""
         self._last_prompt = prompt
-
         last_exc = None
+
         for attempt in range(self.max_retries + 1):
-            self._call_count += 1  # 每次尝试递增
+            self._call_count += 1
             try:
                 return await asyncio.wait_for(
                     self._do_generate(prompt),
@@ -84,20 +69,40 @@ class LLMClient:
         )
 
     def generate_sync(self, prompt: str) -> str:
-        """同步便捷方法 (内部调用 asyncio.run)。"""
+        """同步便捷方法。"""
         return asyncio.run(self.generate(prompt))
 
     # -------------------------------------------------------------------------
-    # Private
+    # Private: HTTP 调用
     # -------------------------------------------------------------------------
 
     async def _do_generate(self, prompt: str) -> str:
-        """实际 LLM 调用逻辑。
+        """实际 LLM HTTP 调用 — Deepseek / OpenAI 兼容 API。"""
+        import httpx
 
-        基类返回占位文本；子类或 Mock 可覆盖此方法。
-        """
-        # 模拟 LLM 响应 (真实实现替换为 HTTP 调用)
-        return f'{{"guests": [{{"role": "host", "name": "主持人"}}]}}'
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        body = {
+            "model": self.model,
+            "messages": [
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": 0.7,
+            "max_tokens": 2048,
+        }
+
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            resp = await client.post(
+                f"{self.base_url}/chat/completions",
+                json=body,
+                headers=headers,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return data["choices"][0]["message"]["content"]
 
     # -------------------------------------------------------------------------
     # 测试辅助
@@ -105,15 +110,11 @@ class LLMClient:
 
     @property
     def call_count(self) -> int:
-        """LLM 被调用的总次数 (测试断言用)。"""
         return self._call_count
 
 
 class MockLLMClient(LLMClient):
-    """测试用 Mock LLM 客户端。
-
-    预设响应内容，不发起真实 HTTP 请求。
-    """
+    """测试用 Mock LLM 客户端。"""
 
     def __init__(self, preset_response: str = "{}", **kwargs):
         super().__init__(api_key="mock", **kwargs)

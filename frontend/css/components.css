@@ -1142,7 +1142,7 @@
   background: rgba(0, 0, 0, 0.65);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);       /* Safari 兼容 */
-  display: flex;
+  display: none;                             /* 默认隐藏, React 组件通过 inline style 控制 */
   align-items: center;
   justify-content: center;
   z-index: var(--z-modal);
