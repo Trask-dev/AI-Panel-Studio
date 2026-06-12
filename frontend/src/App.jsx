@@ -118,6 +118,10 @@ export default function App() {
       store.loadHistory((msgs && msgs.items) ? msgs.items : []);
       api.fetchConsensus(d.id).then(r => { if (r?.items) store.onConsensusUpdate({ items: r.items }); });
       api.fetchDivergences(d.id).then(r => { if (r?.items) store.onDivergenceUpdate({ items: r.items }); });
+      // 重新进入已结束讨论 → 加载总结并弹窗
+      if (d.status === "finished" || d.status === "summarizing") {
+        api.fetchSummary(d.id).then(s => { if (s) { store.setSummary(s); setShowSummary(true); } }).catch(() => {});
+      }
     }
   };
 
