@@ -90,12 +90,14 @@ class Orchestrator:
         self,
         db: Session,
         speech_fn: Callable[[str, str], str] | None = None,
-        sse_manager=None,  # SSEManager 单例，用于推送实时事件
+        sse_manager=None,
+        llm_client=None,  # 方案 C: 并行评估需要的 LLM 客户端
     ):
         self.db = db
         self._speech = speech_fn or self._default_speech
         self._state_machine = GuestStateMachine()
         self._sse = sse_manager
+        self._llm = llm_client
 
     # -------------------------------------------------------------------------
     # Public API
@@ -145,11 +147,15 @@ class Orchestrator:
         })
 
     def run_round(self, discussion_id: str) -> dict:
-        """运行一轮讨论: 动态调度——专家根据上下文自主决定发言/反驳/补充/沉默。
+        """方案 C: 全分布式 Agent 动态调度。
 
-        SDD #9: 不允许机械式轮流发言。每轮由 LLM 评估上下文，
-        为每位专家打分，决定发言顺序和发言类型。
+        Phase 1: 所有专家并行评估 transcript → 举手/沉默/反驳/补充
+        Phase 2: 按 urgency 排序
+        Phase 3: 依次发言（后发言者看到更新后的上下文）
+        Phase 4: 主持人收尾追问
+        Phase 5: 共识分析
         """
+        import asyncio, json
         status = self._get_discussion_status(discussion_id)
         if status != "active":
             raise ValueError(f"讨论状态应为 active, 当前: {status}")
@@ -160,32 +166,68 @@ class Orchestrator:
         round_number = current_round + 1
         seq = self._next_sequence(discussion_id)
 
-        # 1. 主持人开场/提问
-        if round_number == 1:
-            # 首轮: 开场白已在 start() 中生成，这里只做立场陈述调度
-            pass
-        else:
+        # Phase 0: Host 提问 (非首轮)
+        if round_number > 1:
             question = self._speech(host.name, "question")
             entry = self._insert_entry(discussion_id, host.id, seq, round_number, "question", question)
             self._push_sse(discussion_id, "transcript_append", self._entry_to_sse(entry, host))
             seq += 1
 
-        # 2. 动态调度: 非固定顺序，每个专家至少发言 1 次，可抢答/反驳/补充
-        spoke_this_round = set()
-        max_speeches = len(experts) * 2  # 最多 2 轮发言机会
-        speech_count = 0
+        # Phase 1: 并行评估 —— 所有专家同时举手/沉默
+        transcript = self._get_transcript_text(discussion_id)
 
-        while len(spoke_this_round) < len(experts) and speech_count < max_speeches:
-            # 获取上下文
-            recent = self._get_recent_entries(discussion_id, limit=8)
+        async def _eval_one(expert):
+            """单个专家评估: 返回 {want_to_speak, urgency, intent}"""
+            persona = expert.persona_prompt or ""
+            stance = expert.stance or ""
+            name = expert.name
 
-            # 选择下一位发言者
-            selected = self._select_next_speaker(experts, spoke_this_round, recent)
-            if selected is None:
-                break  # 无人举手
-            expert, entry_type = selected
-            speech_count += 1
-            spoke_this_round.add(expert.id)
+            prompt = (
+                f"你是{name}。{persona}\n你的立场: {stance}\n\n"
+                f"根据以下讨论记录，决定你是否想发言:\n"
+                f"- 有人说的话你不赞同 → rebut (urgency 7-10)\n"
+                f"- 你有新角度可以补充 → supplement (urgency 4-7)\n"
+                f"- 你赞同但想强调 → new_point (urgency 3-5)\n"
+                f"- 没什么想说的 → pass (urgency 0)\n\n"
+                f"只返回 JSON: {{\"want_to_speak\":true/false,\"urgency\":0-10,\"intent\":\"rebut|supplement|new_point|pass\"}}\n\n"
+                f"讨论记录:\n{transcript}\n\n你的决定 (只返回 JSON):"
+            )
+
+            try:
+                if self._llm:
+                    resp = await self._llm.generate(prompt)
+                    return self._parse_eval_json(resp)
+                else:
+                    return self._fallback_eval(expert)
+            except Exception:
+                return self._fallback_eval(expert)
+
+        # 评估: 有 LLM 且非首轮 → LLM 判断；否则 → 随机
+        if self._llm and round_number > 1:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                evaluations = loop.run_until_complete(
+                    asyncio.gather(*[_eval_one(e) for e in experts])
+                )
+            finally:
+                loop.close()
+        else:
+            evaluations = [self._fallback_eval(e) for e in experts]
+
+        # Phase 2: 按 urgency 排序，pass 的跳过
+        speaking = [(expert, ev) for expert, ev in zip(experts, evaluations)
+                    if ev.get("want_to_speak", False)]
+        speaking.sort(key=lambda x: x[1].get("urgency", 0), reverse=True)
+
+        # Phase 3: 串行发言（后发言者看到更新后的上下文）
+        for expert, evaluation in speaking:
+            intent = evaluation.get("intent", "supplement")
+            entry_type_map = {"rebut": "rebuttal", "supplement": "supplement",
+                              "new_point": "speech"}
+            entry_type = entry_type_map.get(intent, "speech")
+            if round_number == 1:
+                entry_type = "position_statement"
 
             # thinking → SSE
             self.set_guest_status(discussion_id, expert.id, "thinking")
@@ -201,35 +243,30 @@ class Orchestrator:
                 "guest_name": expert.name, "status": "speaking",
             })
 
-            # 生成发言
-            if round_number == 1:
-                entry_type = "position_statement"
+            # 生成发言（限制 1-2 句）
             content = self._speech(expert.name, entry_type)
+            content = self._trim_to_sentences(content, max_sentences=3)
             entry = self._insert_entry(discussion_id, expert.id, seq, round_number, entry_type, content)
             self._push_sse(discussion_id, "transcript_append", self._entry_to_sse(entry, expert))
             seq += 1
 
-            # waiting → SSE
-            self.set_guest_status(discussion_id, expert.id, "waiting")
-            self._push_sse(discussion_id, "guest_status_change", {
-                "discussion_id": discussion_id, "guest_id": expert.id,
-                "guest_name": expert.name, "status": "waiting",
-            })
+            # waiting → idle
+            self.set_guest_status(discussion_id, expert.id, "idle")
 
-        # 3. 所有专家回到 idle
+        # Phase 4: 主持人收尾
+        all_idle = True
         for expert in experts:
             self.set_guest_status(discussion_id, expert.id, "idle")
 
-        # 4. 轮次 +1
+        # 轮次 +1
         self._update_discussion(discussion_id, {"round_count": round_number})
         self._push_sse(discussion_id, "round_advance", {
             "discussion_id": discussion_id, "round_number": round_number,
         })
 
-        # 5. 共识/分歧分析 → 返回结果
+        # Phase 5: 共识分析
         result = self._analyze_and_push_consensus(discussion_id)
 
-        # 6. 检查上限
         max_rounds = self._get_max_rounds(discussion_id)
         if max_rounds is not None and round_number >= max_rounds:
             self._update_discussion(discussion_id, {"status": "summarizing"})
@@ -238,6 +275,33 @@ class Orchestrator:
             })
 
         return result or {"consensus": [], "divergences": []}
+
+    def _parse_eval_json(self, raw: str) -> dict:
+        import json
+        text = raw.strip()
+        if text.startswith("```"): text = text.split("\n", 1)[1].rsplit("\n", 1)[0]
+        return json.loads(text)
+
+    def _fallback_eval(self, expert) -> dict:
+        import random
+        return {"want_to_speak": True,
+                "urgency": random.randint(0, 100),  # 宽范围确保每轮顺序不同
+                "intent": random.choice(["supplement", "new_point", "rebut"])}
+
+    def _get_transcript_text(self, did: str) -> str:
+        rows = self.db.execute(
+            text("SELECT g.name, g.role, te.content FROM transcript_entries te "
+                 "JOIN guests g ON te.guest_id=g.id WHERE te.discussion_id=:did "
+                 "ORDER BY te.sequence_number DESC LIMIT 10"),
+            {"did": did}).fetchall()
+        return "\n".join(f"[{r.role}] {r.name}: {r.content[:150]}" for r in reversed(rows))
+
+    def _trim_to_sentences(self, text: str, max_sentences: int = 3) -> str:
+        """截取前 N 句，控制发言长度。"""
+        import re
+        sentences = re.split(r'[。！？\n]', text)
+        sentences = [s.strip() for s in sentences if s.strip()]
+        return '。'.join(sentences[:max_sentences]) + ('。' if len(sentences) > max_sentences else '')
 
     def _select_next_speaker(self, experts, spoke_this_round, recent_entries):
         """动态选择下一位发言者。

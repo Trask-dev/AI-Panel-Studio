@@ -89,14 +89,14 @@ def get_orchestrator(db: Session = Depends(get_db)) -> Orchestrator:
     sse = get_sse_manager()
     llm = _make_llm_client()
     if not llm:
-        return Orchestrator(db, sse_manager=sse)
+        return Orchestrator(db, sse_manager=sse, llm_client=None)
 
     gen = SpeechGenerator(llm)
 
     def llm_speech(guest_name: str, entry_type: str) -> str:
         return gen.generate_by_name(db, guest_name, entry_type)
 
-    return Orchestrator(db, speech_fn=llm_speech, sse_manager=sse)
+    return Orchestrator(db, speech_fn=llm_speech, sse_manager=sse, llm_client=llm)
 
 
 def _make_llm_client():

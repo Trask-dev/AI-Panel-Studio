@@ -54,6 +54,54 @@ class SpeechGenerator:
         return self.generate(db, did, guest, entry_type, round_num)
 
     # -------------------------------------------------------------------------
+    # 方案 C: 专家自主评估（举手/抢答）
+    # -------------------------------------------------------------------------
+
+    def evaluate(self, guest: dict, transcript: str) -> dict:
+        """让专家评估当前讨论，决定是否发言及意图。
+
+        Returns: {"want_to_speak": bool, "urgency": 0-10, "intent": str}
+        """
+        name = guest.get("name", "嘉宾")
+        stance = guest.get("stance", "")
+        persona = guest.get("persona_prompt", "")
+
+        system = (
+            f"你是{name}。{persona}\n你的立场: {stance}\n\n"
+            f"根据以下讨论记录，决定你是否想发言:\n"
+            f"- 有人说的话你不赞同 → rebut (urgency 7-10)\n"
+            f"- 你有新角度可以补充 → supplement (urgency 4-7)\n"
+            f"- 你赞同但想强调某点 → new_point (urgency 3-5)\n"
+            f"- 没什么想说的 → pass (urgency 0)\n\n"
+            f"只返回 JSON: {{\"want_to_speak\":true/false,\"urgency\":0-10,\"intent\":\"rebut|supplement|new_point|pass\"}}"
+        )
+
+        user = f"讨论记录:\n{transcript}\n\n你的决定 (只返回 JSON):"
+
+        try:
+            response = self._llm.generate_sync(system + "\n---\n" + user)
+            return self._parse_eval_response(response)
+        except Exception:
+            import random
+            return {
+                "want_to_speak": random.choice([True, False, True]),
+                "urgency": random.randint(3, 8),
+                "intent": random.choice(["supplement", "new_point", "rebut"]),
+            }
+
+    def _parse_eval_response(self, raw: str) -> dict:
+        import json
+        text = raw.strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[1].rsplit("\n", 1)[0]
+        data = json.loads(text)
+        return {
+            "want_to_speak": data.get("want_to_speak", False),
+            "urgency": int(data.get("urgency", 0)),
+            "intent": data.get("intent", "pass"),
+        }
+
+    # -------------------------------------------------------------------------
     # Public API (原始)
     # -------------------------------------------------------------------------
 
