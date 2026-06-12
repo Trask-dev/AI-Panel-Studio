@@ -193,17 +193,13 @@ def get_discussion(
 @router.post("/discussions/{discussion_id}/guests/generate")
 def generate_guests(
     discussion_id: str,
+    regenerate: bool = Query(False),
     db: Session = Depends(get_db),
 ):
     """LLM 生成嘉宾阵容并持久化到数据库。
 
-    流程:
-      1. 从 DB 读取讨论的 topic + expert_count
-      2. 调用 GuestGenerator (Mock LLM) 生成 1 Host + N Expert
-      3. 将嘉宾写入 guests 表
-      4. 返回完整的嘉宾列表
-
-    调用时机: 创建讨论后、开始讨论前。必需步骤，否则 /start 会 409。
+    参数:
+      regenerate: true=强制重新生成(停用旧嘉宾); false=有旧嘉宾则直接返回
     """
     # 1. 读取讨论信息
     disc = db.execute(
@@ -212,7 +208,15 @@ def generate_guests(
     if disc is None:
         raise HTTPException(404, {"code": "NOT_FOUND", "message": "讨论不存在"})
 
-    # 2. 检查是否已有活跃嘉宾 (防止重复生成)
+    # 2. 重新生成: 停用旧嘉宾
+    if regenerate:
+        db.execute(
+            text("UPDATE guests SET is_active=0 WHERE discussion_id=:did"),
+            {"did": discussion_id},
+        )
+        db.commit()
+
+    # 3. 检查是否已有活跃嘉宾 (防止重复生成)
     existing = db.execute(
         text(
             "SELECT COUNT(*) as c FROM guests "
@@ -220,7 +224,7 @@ def generate_guests(
         ),
         {"did": discussion_id},
     ).fetchone().c
-    if existing > 0:
+    if not regenerate and existing > 0:
         # 已有嘉宾，直接返回
         guests = db.execute(
             text(

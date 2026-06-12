@@ -73,7 +73,7 @@ class ConsensusAnalyzer:
             return {"consensus": [], "divergences": []}
 
         if self._llm:
-            return self._llm_analyze(entries)
+            return self._llm_analyze(db, entries)
         return self._keyword_analyze(db, entries)
 
     def analyze_and_persist(self, db: Session, discussion_id: str) -> dict:
@@ -241,13 +241,13 @@ class ConsensusAnalyzer:
     # LLM 模式 (Deepseek 驱动)
     # -----------------------------------------------------------------------
 
-    def _llm_analyze(self, entries: list[dict]) -> dict:
+    def _llm_analyze(self, db: Session, entries: list[dict]) -> dict:
         prompt = self._build_analysis_prompt(entries)
         try:
             response = self._llm.generate_sync(prompt)
             return self._parse_llm_response(response)
         except Exception:
-            return self._keyword_analyze(entries)
+            return self._keyword_analyze(db, entries)
 
     def _build_analysis_prompt(self, entries: list[dict]) -> str:
         lines = []

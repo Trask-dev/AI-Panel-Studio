@@ -216,15 +216,16 @@ export default function App() {
               <button className="btn btn--primary" onClick={() => setLineupConfirmed(true)}>
                 确认阵容
               </button>
-              <button className="btn btn--secondary" disabled={asyncStatus.type !== "idle"} onClick={async () => {
-                await runAsync("generating", "AI 正在重新生成嘉宾阵容…", async () => {
-                  const gen = await api.generateGuests(discId);
-                  store.initDiscussion(useDiscussionStore.getState().meta, gen.guests || []);
-                  api.fetchConsensus(discId).then(r => { if (r?.items) store.onConsensusUpdate({ items: r.items }); });
-                  api.fetchDivergences(discId).then(r => { if (r?.items) store.onDivergenceUpdate({ items: r.items }); });
-                });
+              <button className="btn btn--secondary" disabled={actionLoading} onClick={async () => {
+                setActionLoading(true);
+                try {
+                  const gen = await api.generateGuests(discId, true);
+                  const detail = await api.getDiscussion(discId);
+                  store.initDiscussion(detail.discussion, gen.guests || []);
+                } catch (e) { setError("重新生成失败: " + (e.message || "")); }
+                finally { setActionLoading(false); }
               }}>
-                重新生成
+                {actionLoading ? "生成中…" : "重新生成"}
               </button>
             </>
           )}

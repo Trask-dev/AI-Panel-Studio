@@ -46,10 +46,11 @@ export async function getDiscussion(id) {
 // ---------------------------------------------------------------------------
 
 /** POST /discussions/{id}/guests/generate */
-export async function generateGuests(id) {
-  const resp = await fetch(`${BASE}/discussions/${id}/guests/generate`, {
-    method: "POST",
-  });
+export async function generateGuests(id, regenerate = false) {
+  const url = regenerate
+    ? `${BASE}/discussions/${id}/guests/generate?regenerate=true`
+    : `${BASE}/discussions/${id}/guests/generate`;
+  const resp = await fetch(url, { method: "POST" });
   return resp.json();
 }
 
