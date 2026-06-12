@@ -30,9 +30,8 @@ export default function App() {
         } catch {}
       };
 
-      es.onerror = () => {
-        // EventSource 自动重连，无需处理
-      };
+      es.onopen = () => setSseConnected(true);
+      es.onerror = () => setSseConnected(false);
     }
     return () => {
       if (sseRef.current) { sseRef.current.close(); sseRef.current = null; }
@@ -46,7 +45,9 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [lineupConfirmed, setLineupConfirmed] = useState(false);
-  const [actionLoading, setActionLoading] = useState(false); // 防重复点击
+  const [actionLoading, setActionLoading] = useState(false);
+  const [sseConnected, setSseConnected] = useState(false);
+  const asyncStatus = useDiscussionStore((s) => s.asyncStatus);
 
   useEffect(() => {
     api
@@ -70,67 +71,78 @@ export default function App() {
       setShowCreate(false);
       setNewTopic("");
       setLineupConfirmed(false);
-      // 不自动进入演播厅 —— SDD #6: 等用户确认阵容
+      // 关闭旧连接 + 清空状态
+      if (sseRef.current) { sseRef.current.close(); sseRef.current = null; }
+      store.reset();
+      setDiscId(null);
+      setSseConnected(false);
     } catch (e) {
       setError("创建失败: " + (e.message || "未知错误"));
     }
   };
 
-  const handleSelectDiscussion = async (d) => {
+  const runAsync = async (type, message, fn) => {
+    store.setAsyncStatus(type, message);
     try {
-      // 关闭旧 SSE + 清空全部状态
-      if (sseRef.current) { sseRef.current.close(); sseRef.current = null; }
-      store.reset();
-      setDiscId(d.id);
-      setLineupConfirmed(false);
-      setShowSummary(false);
-      setError(null);
-
-      const detail = await api.getDiscussion(d.id);
-      // 防御: 确保 guests 严格来自当前 discussion
-      const safeGuests = (detail.guests || []).filter(g => g.discussion_id === d.id);
-      store.initDiscussion(detail.discussion, safeGuests);
-
-      if (d.status === "setup" && safeGuests.length === 0) {
-        const gen = await api.generateGuests(d.id);
-        const genGuests = (gen.guests || []).filter(g => g.discussion_id === d.id);
-        store.initDiscussion(detail.discussion, genGuests);
-      }
-
-      if (d.status !== "setup") {
-        setLineupConfirmed(true);
-        const msgs = await api.fetchMessages(d.id);
-        store.loadHistory((msgs && msgs.items) ? msgs.items : []);
-      }
+      await fn();
+      store.clearAsyncStatus();
     } catch (e) {
-      setError("加载讨论失败: " + (e.message || ""));
+      // 失败时保留状态栏显示错误，3 秒后自动清除
+      store.setAsyncStatus("error", message + "失败: " + (e.message || "请重试"));
+      setTimeout(() => store.clearAsyncStatus(), 5000);
+    }
+  };
+
+  const handleSelectDiscussion = async (d) => {
+    if (sseRef.current) { sseRef.current.close(); sseRef.current = null; }
+    store.reset();
+    setDiscId(d.id);
+    setLineupConfirmed(false);
+    setShowSummary(false);
+    setError(null);
+
+    const detail = await api.getDiscussion(d.id);
+    const safeGuests = (detail.guests || []).filter(g => g.discussion_id === d.id);
+    store.initDiscussion(detail.discussion, safeGuests);
+
+    if (d.status === "setup" && safeGuests.length === 0) {
+      await runAsync("generating", "AI 正在生成嘉宾阵容…", async () => {
+        const gen = await api.generateGuests(d.id);
+        store.initDiscussion(detail.discussion, gen.guests || []);
+      });
+    }
+
+    if (d.status !== "setup") {
+      setLineupConfirmed(true);
+      const msgs = await api.fetchMessages(d.id);
+      store.loadHistory((msgs && msgs.items) ? msgs.items : []);
+      api.fetchConsensus(d.id).then(r => { if (r?.items) store.onConsensusUpdate({ items: r.items }); });
+      api.fetchDivergences(d.id).then(r => { if (r?.items) store.onDivergenceUpdate({ items: r.items }); });
     }
   };
 
   const handleAdvanceRound = async () => {
     if (!discId) return;
-    try {
+    await runAsync("advancing", "AI 正在生成发言并分析共识…", async () => {
       const r = await api.advanceRound(discId);
       store.onRoundAdvance({ round_number: r.round_count });
       const msgs = await api.fetchMessages(discId);
       store.loadHistory((msgs && msgs.items) ? msgs.items : []);
-      if (r.status === "summarizing") {
-        store.onDiscussionStatusChange({ status: "summarizing" });
-      }
-    } catch (e) {
-      setError("推进轮次失败: " + (e.message || ""));
-    }
+      if (r.consensus) store.onConsensusUpdate({ items: r.consensus });
+      if (r.divergences) store.onDivergenceUpdate({ items: r.divergences });
+      if (r.status === "summarizing") store.onDiscussionStatusChange({ status: "summarizing" });
+    });
   };
 
   const handleEnd = async () => {
     if (!discId) return;
-    try {
+    await runAsync("summarizing", "AI 正在生成总结…", async () => {
       await api.endDiscussion(discId);
       store.onDiscussionStatusChange({ status: "summarizing" });
+      const msgs = await api.fetchMessages(discId);
+      store.loadHistory((msgs && msgs.items) ? msgs.items : []);
       setShowSummary(true);
-    } catch (e) {
-      setError("结束失败: " + (e.message || ""));
-    }
+    });
   };
 
   const guests = store.guests || [];
@@ -175,19 +187,22 @@ export default function App() {
               Round <strong>{store.meta.roundCount}</strong>
             </span>
           )}
+          {discId && store.meta.status === "active" && (
+            <span style={{ fontSize: "0.65rem", color: sseConnected ? "var(--success)" : "var(--danger)" }}>
+              {sseConnected ? "🟢 实时" : "🔴 断连"}
+            </span>
+          )}
         </div>
         <div className="app-header__right">
           {discId && store.meta.status === "setup" && !host && (
-            <button className="btn btn--primary" disabled={actionLoading} onClick={async () => {
-              setActionLoading(true);
-              try {
+            <button className="btn btn--primary" disabled={asyncStatus.type !== "idle"} onClick={async () => {
+              await runAsync("generating", "AI 正在生成嘉宾阵容…", async () => {
                 const gen = await api.generateGuests(discId);
                 const detail = await api.getDiscussion(discId);
                 store.initDiscussion(detail.discussion, gen.guests || []);
-              } catch (e) { setError("生成失败: " + (e.message || "")); }
-              finally { setActionLoading(false); }
+              });
             }}>
-              {actionLoading ? "生成中..." : "🤖 生成嘉宾"}
+              {asyncStatus.type === "generating" ? "⏳ 生成中…" : "🤖 生成嘉宾"}
             </button>
           )}
           {discId && store.meta.status === "setup" && host && !lineupConfirmed && (
@@ -200,6 +215,8 @@ export default function App() {
                   const gen = await api.generateGuests(discId);
                   const detail = await api.getDiscussion(discId);
                   store.initDiscussion(detail.discussion, gen.guests || []);
+                  api.fetchConsensus(discId).then(r => { if (r && r.items) store.onConsensusUpdate({ items: r.items }); });
+                  api.fetchDivergences(discId).then(r => { if (r && r.items) store.onDivergenceUpdate({ items: r.items }); });
                 } catch (e) { setError("重新生成失败: " + (e.message || "")); }
               }}>
                 🔄 重新生成
@@ -207,29 +224,52 @@ export default function App() {
             </>
           )}
           {discId && store.meta.status === "setup" && host && lineupConfirmed && (
-            <button className="btn btn--primary" onClick={async () => {
-              try {
+            <button className="btn btn--primary" disabled={asyncStatus.type !== "idle"} onClick={async () => {
+              await runAsync("starting", "AI 正在生成开场白…", async () => {
                 await api.startDiscussion(discId);
                 store.onDiscussionStatusChange({ discussion_id: discId, status: "active" });
                 const msgs = await api.fetchMessages(discId);
                 store.loadHistory((msgs && msgs.items) ? msgs.items : []);
-              } catch (e) { setError("开始失败: " + (e.message || "")); }
+                api.fetchConsensus(discId).then(r => { if (r?.items) store.onConsensusUpdate({ items: r.items }); });
+                api.fetchDivergences(discId).then(r => { if (r?.items) store.onDivergenceUpdate({ items: r.items }); });
+              });
             }}>
-              🎬 开始讨论
+              {asyncStatus.type === "starting" ? "⏳ 准备中…" : "🎬 开始讨论"}
             </button>
           )}
           {discId && store.meta.status === "active" && (
             <>
-              <button className="btn btn--secondary" onClick={handleAdvanceRound}>
-                ▶ 下一轮
+              <button className="btn btn--secondary" onClick={handleAdvanceRound}
+                disabled={asyncStatus.type !== "idle"}>
+                {asyncStatus.type === "advancing" ? "⏳ 生成中…" : "▶ 下一轮"}
               </button>
-              <button className="btn btn--secondary" onClick={handleEnd}>
-                ■ 结束
+              <button className="btn btn--secondary" onClick={handleEnd}
+                disabled={asyncStatus.type !== "idle"}>
+                {asyncStatus.type === "summarizing" ? "⏳ 总结中…" : "■ 结束"}
               </button>
             </>
           )}
         </div>
       </header>
+
+      {/* 全局异步操作状态栏 */}
+      {asyncStatus.type !== "idle" && (
+        <div style={{
+          height: 32, display: "flex", alignItems: "center", justifyContent: "center",
+          background: asyncStatus.type === "error" ? "rgba(217,74,74,0.08)" : "var(--bg-secondary)",
+          borderBottom: "1px solid var(--border-default)",
+          color: asyncStatus.type === "error" ? "var(--danger)" : "var(--gold)",
+          fontSize: "var(--text-sm)", gap: 8, flexShrink: 0,
+        }}>
+          <span className="streaming-cursor" style={{ display: "inline-block" }} />
+          {asyncStatus.message}
+          {asyncStatus.startedAt && (
+            <span style={{ color: "var(--text-muted)", fontSize: "var(--text-xs)", fontFamily: "var(--font-mono)" }}>
+              {Math.floor((Date.now() - asyncStatus.startedAt) / 1000)}s
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Error */}
       {error && (
@@ -258,80 +298,6 @@ export default function App() {
           <section className="studio-stage">
             <div className="stage-lighting" aria-hidden="true" />
 
-            {/* SDD #6: 阵容确认环节 */}
-            {store.meta.status === "setup" && host && !lineupConfirmed && (
-              <div style={{ zIndex: 10, marginBottom: 16, display: "flex", gap: 12, alignItems: "center" }}>
-                <span style={{ color: "var(--text-secondary)", fontSize: "0.9rem" }}>
-                  请确认嘉宾阵容：
-                </span>
-                <button
-                  className="btn btn--primary"
-                  style={{ fontSize: "1rem", padding: "10px 24px" }}
-                  onClick={() => setLineupConfirmed(true)}
-                >
-                  ✅ 确认阵容
-                </button>
-                <button
-                  className="btn btn--secondary"
-                  style={{ fontSize: "1rem", padding: "10px 24px" }}
-                  onClick={async () => {
-                    try {
-                      const gen = await api.generateGuests(discId);
-                      const detail = await api.getDiscussion(discId);
-                      store.initDiscussion(detail.discussion, gen.guests || []);
-                    } catch (e) {
-                      setError("重新生成失败: " + (e.message || ""));
-                    }
-                  }}
-                >
-                  🔄 重新生成
-                </button>
-              </div>
-            )}
-
-            {/* 阵容已确认：显示开始按钮 */}
-            {store.meta.status === "setup" && host && lineupConfirmed && (
-              <div style={{ zIndex: 10, marginBottom: 16 }}>
-                <button
-                  className="btn btn--primary"
-                  style={{ fontSize: "1.1rem", padding: "12px 32px" }}
-                  onClick={async () => {
-                    try {
-                      await api.startDiscussion(discId);
-                      store.onDiscussionStatusChange({ discussion_id: discId, status: "active" });
-                      const msgs = await api.fetchMessages(discId);
-                      store.loadHistory((msgs && msgs.items) ? msgs.items : []);
-                    } catch (e) {
-                      setError("开始失败: " + (e.message || ""));
-                    }
-                  }}
-                >
-                  🎬 开始讨论
-                </button>
-              </div>
-            )}
-
-            {/* 无嘉宾：生成按钮 */}
-            {store.meta.status === "setup" && !host && (
-              <div style={{ zIndex: 10, marginBottom: 16 }}>
-                <button
-                  className="btn btn--primary"
-                  style={{ fontSize: "1.1rem", padding: "12px 32px" }}
-                  onClick={async () => {
-                    try {
-                      const gen = await api.generateGuests(discId);
-                      const detail = await api.getDiscussion(discId);
-                      store.initDiscussion(detail.discussion, gen.guests || []);
-                    } catch (e) {
-                      setError("生成失败: " + (e.message || ""));
-                    }
-                  }}
-                >
-                  🤖 生成嘉宾阵容
-                </button>
-              </div>
-            )}
-
             {host && (
               <div className="stage-host-area">
                 <GuestCard guest={host} />
@@ -358,7 +324,7 @@ export default function App() {
               </div>
             </section>
             <aside className="analysis-panel">
-              <AnalysisPanel discussionId={discId} />
+              <AnalysisPanel />
             </aside>
           </div>
         </main>
@@ -493,6 +459,12 @@ function GuestCard({ guest }) {
             : "● 待机"}
         </span>
       </div>
+      {/* 思考气泡: thinking 状态且存在 public_thought 时显示 */}
+      {status === "thinking" && guest.snapshot?.public_thought && (
+        <div className="thinking-bubble" style={{ "--guest-color": guest.color || "#9090a0", display: "block" }}>
+          <p className="thinking-bubble__text">{guest.snapshot.public_thought}</p>
+        </div>
+      )}
     </div>
   );
 }
@@ -500,62 +472,52 @@ function GuestCard({ guest }) {
 // =========================================================================
 // AnalysisPanel
 // =========================================================================
-function AnalysisPanel({ discussionId }) {
-  const storeConsensus = useDiscussionStore((s) => s.consensus);
-  const storeDivergences = useDiscussionStore((s) => s.divergences);
-  const [consensus, setConsensus] = useState([]);
-  const [divergences, setDivergences] = useState([]);
-
-  // 首次挂载从 REST 加载；后续 SSE 事件通过 store 驱动更新
-  useEffect(() => {
-    if (discussionId) {
-      api.fetchConsensus(discussionId).then((d) => setConsensus((d && d.items) || []));
-      api.fetchDivergences(discussionId).then((d) => setDivergences((d && d.items) || []));
-    }
-  }, [discussionId]);
-
-  // SSE 事件 → 实时更新
-  useEffect(() => {
-    if (storeConsensus.length > 0) setConsensus(storeConsensus);
-  }, [storeConsensus]);
-  useEffect(() => {
-    if (storeDivergences.length > 0) setDivergences(storeDivergences);
-  }, [storeDivergences]);
+function AnalysisPanel() {
+  const consensus = useDiscussionStore((s) => s.consensus);
+  const divergences = useDiscussionStore((s) => s.divergences);
 
   return (
-    <>
-      <div className="panel-tabs">
-        <span className="panel-tab panel-tab--active">✅ 共识 ({consensus.length})</span>
-        <span className="panel-tab">⚡ 分歧 ({divergences.length})</span>
-      </div>
-      <div className="panel-content">
-        {consensus.map((c) => (
-          <div className="consensus-card" key={c.id}>
-            <div className="consensus-card__header">
-              <span className="consensus-icon">✅</span>
-              <span className="consensus-confidence">{Math.round((c.confidence || 0) * 100)}%</span>
+    <div className="panel-content" style={{ display: "flex", flexDirection: "column", padding: "var(--space-md)", overflowY: "auto", flex: 1, gap: "var(--space-md)" }}>
+      {/* 共识区 */}
+      <div style={{ marginBottom: "var(--space-lg)" }}>
+        <h3 style={{ color: "var(--text-primary)", fontSize: "var(--text-sm)", fontWeight: 600, marginBottom: "var(--space-sm)" }}>
+          ✅ 共识 ({consensus.length})
+        </h3>
+        {consensus.length === 0 ? (
+          <p style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>推进讨论后出现</p>
+        ) : (
+          consensus.map((c, i) => (
+            <div className="consensus-card" key={c.id || `c-${i}`} style={{ marginBottom: "var(--space-sm)" }}>
+              <div className="consensus-card__header">
+                <span className="consensus-confidence">{Math.round((c.confidence || 0) * 100)}%</span>
+              </div>
+              <p className="consensus-card__content">{c.content}</p>
+              <div className="consensus-bar">
+                <div className="consensus-bar__fill" style={{ "--fill": c.confidence || 0 }} />
+              </div>
             </div>
-            <p className="consensus-card__content">{c.content}</p>
-            <div className="consensus-bar">
-              <div className="consensus-bar__fill" style={{ "--fill": c.confidence || 0 }} />
-            </div>
-          </div>
-        ))}
-        {divergences.map((d) => (
-          <div className="divergence-card" key={d.id}>
-            <div className="divergence-card__header">
-              <span className="divergence-icon">⚡</span>
-              <span className={`severity-badge severity-badge--${d.severity || "moderate"}`}>{d.severity}</span>
-            </div>
-            <p className="divergence-card__content">{d.content}</p>
-          </div>
-        ))}
-        {consensus.length === 0 && divergences.length === 0 && (
-          <p style={{ color: "var(--text-muted)", fontSize: "0.875rem", padding: "1rem" }}>
-            讨论开始后将实时显示共识与分歧
-          </p>
+          ))
         )}
       </div>
-    </>
+
+      {/* 分歧区 */}
+      <div>
+        <h3 style={{ color: "var(--text-primary)", fontSize: "var(--text-sm)", fontWeight: 600, marginBottom: "var(--space-sm)" }}>
+          ⚡ 分歧 ({divergences.length})
+        </h3>
+        {divergences.length === 0 ? (
+          <p style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>推进讨论后出现</p>
+        ) : (
+          divergences.map((d, i) => (
+            <div className="divergence-card" key={d.id || `d-${i}`} style={{ marginBottom: "var(--space-sm)" }}>
+              <div className="divergence-card__header">
+                <span className={`severity-badge severity-badge--${d.severity || "moderate"}`}>{d.severity}</span>
+              </div>
+              <p className="divergence-card__content">{d.content}</p>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
   );
 }

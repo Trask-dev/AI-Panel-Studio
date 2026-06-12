@@ -22,6 +22,23 @@ def _now():
 # 关键词 → 共识/分歧 信号 (fallback 模式)
 # ---------------------------------------------------------------------------
 
+def _query_guest_stances(db: Session, entries: list[dict]) -> dict:
+    """从 guests 表查询立场标签。"""
+    if not entries:
+        return {}
+    guest_ids = list({e["guest_id"] for e in entries})
+    if not guest_ids:
+        return {}
+    # SQLite 不支持 IN 参数化列表，手工拼接占位符
+    placeholders = ",".join(f":g{i}" for i in range(len(guest_ids)))
+    params = {f"g{i}": gid for i, gid in enumerate(guest_ids)}
+    rows = db.execute(
+        text(f"SELECT id, stance_label FROM guests WHERE id IN ({placeholders})"),
+        params,
+    ).fetchall()
+    return {r.id: (r.stance_label or "嘉宾") for r in rows}
+
+
 CONSENSUS_SIGNALS = [
     "一致认为", "达成共识", "都认同", "同意", "我也认为",
     "我赞同", "我支持", "确实如此", "没有异议", "各方均认同",
@@ -57,24 +74,21 @@ class ConsensusAnalyzer:
 
         if self._llm:
             return self._llm_analyze(entries)
-        return self._keyword_analyze(entries)
+        return self._keyword_analyze(db, entries)
 
     def analyze_and_persist(self, db: Session, discussion_id: str) -> dict:
-        """分析并持久化到数据库。"""
+        """分析并持久化到数据库。仅当新产生数据时才替换旧的。"""
         result = self.analyze(db, discussion_id)
+        consensus_items = result.get("consensus", [])
+        divergences_items = result.get("divergences", [])
 
-        # 清除旧活跃数据 → 写入新数据
-        db.execute(
-            text("UPDATE consensus_items SET is_active=0 WHERE discussion_id=:did"),
-            {"did": discussion_id},
-        )
-        db.execute(
-            text("UPDATE divergence_items SET is_active=0 WHERE discussion_id=:did"),
-            {"did": discussion_id},
-        )
-
-        # 写入共识
-        for c in result.get("consensus", []):
+        # 有新的共识 → 替换旧的
+        if consensus_items:
+            db.execute(
+                text("UPDATE consensus_items SET is_active=0 WHERE discussion_id=:did"),
+                {"did": discussion_id},
+            )
+        for c in consensus_items:
             cid = str(uuid.uuid4())
             now = _now()
             db.execute(
@@ -95,8 +109,13 @@ class ConsensusAnalyzer:
                 },
             )
 
-        # 写入分歧
-        for d in result.get("divergences", []):
+        # 有新的分歧 → 替换旧的
+        if divergences_items:
+            db.execute(
+                text("UPDATE divergence_items SET is_active=0 WHERE discussion_id=:did"),
+                {"did": discussion_id},
+            )
+        for d in divergences_items:
             did_item = str(uuid.uuid4())
             now = _now()
             db.execute(
@@ -140,52 +159,81 @@ class ConsensusAnalyzer:
         return [dict(r._mapping) for r in rows]
 
     # -----------------------------------------------------------------------
-    # Fallback: 关键词匹配
+    # Fallback: 立场分析 (关键词兜底 + stance_label 对比)
     # -----------------------------------------------------------------------
 
-    def _keyword_analyze(self, entries: list[dict]) -> dict:
-        consensus, divergences = [], []
-        # 简单规则: 检测一致/对立信号词
-        agreeing = []
-        opposing = []
+    def _keyword_analyze(self, db: Session, entries: list[dict]) -> dict:
+        # 1. 从 DB 查询嘉宾立场标签
+        guest_stances = _query_guest_stances(db, entries)
 
+        # 2. 关键词检测
+        consensus, divergences = [], []
         for e in entries:
             text = e.get("content", "")
-            if any(sig in text for sig in CONSENSUS_SIGNALS):
-                agreeing.append(e)
-            if any(sig in text for sig in DIVERGENCE_SIGNALS):
-                opposing.append(e)
+            e["_has_consensus_signal"] = any(sig in text for sig in CONSENSUS_SIGNALS)
+            e["_has_divergence_signal"] = any(sig in text for sig in DIVERGENCE_SIGNALS)
 
-        # 共识: 2+ 人表达一致信号
-        if len(agreeing) >= 2:
-            guest_ids = list({e["guest_id"] for e in agreeing})
-            if len(guest_ids) >= 2:
-                consensus.append({
-                    "content": "各方在关键议题上表达了趋同立场",
-                    "guest_ids": guest_ids,
-                    "confidence": min(0.9, 0.5 + 0.1 * len(guest_ids)),
-                    "source_ids": [e["id"] for e in agreeing[:3]],
-                })
+        # 3. 立场分组（共识和分歧共用）
+        stance_groups = {}
+        for e in entries:
+            gid = e["guest_id"]
+            label = guest_stances.get(gid, "未知")
+            if label not in stance_groups:
+                stance_groups[label] = []
+            stance_groups[label].append(e)
 
-        # 分歧: 存在对立信号
-        if len(opposing) >= 2:
-            parties = []
-            seen = set()
-            for e in opposing:
-                gid = e["guest_id"]
-                if gid not in seen:
-                    parties.append({
-                        "stance": "持不同意见",
-                        "guest_ids": [gid],
+        # B2: 共识 = 关键词信号 OR 同立场≥2人
+        agreeing = [e for e in entries if e["_has_consensus_signal"]]
+        if len({e["guest_id"] for e in agreeing}) >= 2:
+            consensus.append({
+                "id": str(uuid.uuid4()),
+                "content": "各方在关键议题上达成共识",
+                "guest_ids": list({e["guest_id"] for e in agreeing}),
+                "confidence": 0.75,
+                "source_ids": [e["id"] for e in agreeing[:3]],
+            })
+        # 立场共识: 同立场 ≥2 人 → 自动生成共识
+        if not consensus:
+            for label, group_entries in stance_groups.items():
+                if len(group_entries) >= 2 and label != "主持人":
+                    gids = list({e["guest_id"] for e in group_entries})
+                    consensus.append({
+                        "id": str(uuid.uuid4()),
+                        "content": f"「{label}」阵营在核心议题上达成共识",
+                        "guest_ids": gids,
+                        "confidence": 0.7,
+                        "source_ids": [e["id"] for e in group_entries[:2]],
                     })
-                    seen.add(gid)
-            if len(parties) >= 2:
-                divergences.append({
-                    "content": "各方在实施路径上存在分歧",
-                    "parties": parties,
-                    "severity": "moderate" if len(parties) <= 2 else "sharp",
-                    "source_ids": [e["id"] for e in opposing[:3]],
-                })
+                    break  # 只取一组
+
+        # 4. 分歧: 立场标签对立 → 必然有分歧
+        if len(stance_groups) >= 2:
+            parties = []
+            for label, group_entries in stance_groups.items():
+                gids = list({e["guest_id"] for e in group_entries})
+                parties.append({"stance": label, "guest_ids": gids})
+            severity = "sharp" if len(stance_groups) >= 3 else "moderate"
+            divergences.append({
+                "id": str(uuid.uuid4()),
+                "content": f"各方在核心议题上存在立场分歧（{', '.join(stance_groups.keys())}）",
+                "parties": parties,
+                "severity": severity,
+                "source_ids": [e["id"] for e in entries[:3]],
+            })
+
+        # 5. 关键词分歧（强化）
+        opposing = [e for e in entries if e["_has_divergence_signal"]]
+        if len({e["guest_id"] for e in opposing}) >= 2 and not divergences:
+            parties = []
+            for gid in {e["guest_id"] for e in opposing}:
+                parties.append({"stance": guest_stances.get(gid, "反对"), "guest_ids": [gid]})
+            divergences.append({
+                "id": str(uuid.uuid4()),
+                "content": "各方存在明显分歧",
+                "parties": parties,
+                "severity": "sharp" if len(parties) >= 3 else "moderate",
+                "source_ids": [e["id"] for e in opposing[:3]],
+            })
 
         return {"consensus": consensus, "divergences": divergences}
 

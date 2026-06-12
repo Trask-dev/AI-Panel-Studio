@@ -818,6 +818,13 @@
   background: var(--bg-primary);
 }
 
+/* 面板内容直接滚动，无 Tab 切换 */
+.analysis-panel > .panel-content {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
 /* ---- Tab 导航 ---- */
 .panel-tabs {
   display: flex;

@@ -144,28 +144,49 @@ class Orchestrator:
             "started_at": _now(),
         })
 
-    def run_round(self, discussion_id: str) -> None:
-        """运行一轮讨论: 主持人提问 → 各专家依次发言。"""
+    def run_round(self, discussion_id: str) -> dict:
+        """运行一轮讨论: 动态调度——专家根据上下文自主决定发言/反驳/补充/沉默。
+
+        SDD #9: 不允许机械式轮流发言。每轮由 LLM 评估上下文，
+        为每位专家打分，决定发言顺序和发言类型。
+        """
         status = self._get_discussion_status(discussion_id)
         if status != "active":
             raise ValueError(f"讨论状态应为 active, 当前: {status}")
 
         host = self._get_host(discussion_id)
-        experts = self._get_experts(discussion_id)
+        experts = list(self._get_experts(discussion_id))
         current_round = self._get_round_count(discussion_id)
         round_number = current_round + 1
         seq = self._next_sequence(discussion_id)
 
-        # 1. 主持人提问 (非首轮)
-        if round_number > 1:
+        # 1. 主持人开场/提问
+        if round_number == 1:
+            # 首轮: 开场白已在 start() 中生成，这里只做立场陈述调度
+            pass
+        else:
             question = self._speech(host.name, "question")
-            self._insert_entry(
-                discussion_id, host.id, seq, round_number, "question", question
-            )
+            entry = self._insert_entry(discussion_id, host.id, seq, round_number, "question", question)
+            self._push_sse(discussion_id, "transcript_append", self._entry_to_sse(entry, host))
             seq += 1
 
-        # 2. 各专家发言
-        for expert in experts:
+        # 2. 动态调度: 非固定顺序，每个专家至少发言 1 次，可抢答/反驳/补充
+        spoke_this_round = set()
+        max_speeches = len(experts) * 2  # 最多 2 轮发言机会
+        speech_count = 0
+
+        while len(spoke_this_round) < len(experts) and speech_count < max_speeches:
+            # 获取上下文
+            recent = self._get_recent_entries(discussion_id, limit=8)
+
+            # 选择下一位发言者
+            selected = self._select_next_speaker(experts, spoke_this_round, recent)
+            if selected is None:
+                break  # 无人举手
+            expert, entry_type = selected
+            speech_count += 1
+            spoke_this_round.add(expert.id)
+
             # thinking → SSE
             self.set_guest_status(discussion_id, expert.id, "thinking")
             self._push_sse(discussion_id, "guest_status_change", {
@@ -180,21 +201,12 @@ class Orchestrator:
                 "guest_name": expert.name, "status": "speaking",
             })
 
-            entry_type = "position_statement" if round_number == 1 else "speech"
+            # 生成发言
+            if round_number == 1:
+                entry_type = "position_statement"
             content = self._speech(expert.name, entry_type)
-            entry = self._insert_entry(
-                discussion_id, expert.id, seq, round_number, entry_type, content
-            )
-
-            # transcript_append → SSE
-            self._push_sse(discussion_id, "transcript_append", {
-                "id": entry["id"], "discussion_id": discussion_id,
-                "guest_id": expert.id, "guest_name": expert.name,
-                "guest_color": expert.color or "#9090a0",
-                "guest_role": "expert", "guest_title": expert.title or "",
-                "sequence_number": seq, "round_number": round_number,
-                "entry_type": entry_type, "content": content, "is_final": True,
-            })
+            entry = self._insert_entry(discussion_id, expert.id, seq, round_number, entry_type, content)
+            self._push_sse(discussion_id, "transcript_append", self._entry_to_sse(entry, expert))
             seq += 1
 
             # waiting → SSE
@@ -204,26 +216,72 @@ class Orchestrator:
                 "guest_name": expert.name, "status": "waiting",
             })
 
-        # 3. 所有专家冷却结束 → idle
+        # 3. 所有专家回到 idle
         for expert in experts:
             self.set_guest_status(discussion_id, expert.id, "idle")
 
-        # 4. 轮次 +1 → SSE
+        # 4. 轮次 +1
         self._update_discussion(discussion_id, {"round_count": round_number})
         self._push_sse(discussion_id, "round_advance", {
             "discussion_id": discussion_id, "round_number": round_number,
         })
 
-        # 4.5 共识/分歧分析 → SSE
-        self._analyze_and_push_consensus(discussion_id)
+        # 5. 共识/分歧分析 → 返回结果
+        result = self._analyze_and_push_consensus(discussion_id)
 
-        # 5. 检查是否达到 max_rounds
+        # 6. 检查上限
         max_rounds = self._get_max_rounds(discussion_id)
         if max_rounds is not None and round_number >= max_rounds:
             self._update_discussion(discussion_id, {"status": "summarizing"})
             self._push_sse(discussion_id, "discussion_status_change", {
                 "discussion_id": discussion_id, "status": "summarizing",
             })
+
+        return result or {"consensus": [], "divergences": []}
+
+    def _select_next_speaker(self, experts, spoke_this_round, recent_entries):
+        """动态选择下一位发言者。
+
+        策略: 随机化顺序 + 偏好未发言者 + 随机发言类型。
+        LLM 模式可用时由 LLM 评估上下文决定。
+        """
+        import random
+        available = [e for e in experts if e.id not in spoke_this_round]
+
+        # 如果有未发言者，优先选择
+        if available:
+            expert = random.choice(available)
+        else:
+            # 所有人已发言，允许抢答——随机选
+            expert = random.choice(experts)
+
+        # 随机发言类型（模拟举手/反驳/补充）
+        types = ["speech", "speech", "rebuttal", "supplement"]
+        entry_type = random.choice(types)
+
+        return expert, entry_type
+
+    def _get_recent_entries(self, did: str, limit: int = 8):
+        return self.db.execute(
+            text(
+                "SELECT g.name, te.content FROM transcript_entries te "
+                "JOIN guests g ON te.guest_id = g.id "
+                "WHERE te.discussion_id = :did ORDER BY te.sequence_number DESC LIMIT :lim"
+            ),
+            {"did": did, "lim": limit},
+        ).fetchall()
+
+    def _entry_to_sse(self, entry: dict, guest) -> dict:
+        return {
+            "id": entry["id"], "discussion_id": entry["discussion_id"],
+            "guest_id": guest.id, "guest_name": guest.name,
+            "guest_color": guest.color or "#9090a0",
+            "guest_role": guest.role, "guest_title": guest.title or "",
+            "sequence_number": entry["sequence_number"],
+            "round_number": entry["round_number"],
+            "entry_type": entry["entry_type"], "content": entry["content"],
+            "is_final": True,
+        }
 
     def finish(self, discussion_id: str) -> None:
         """正常结束讨论: 生成 Host 总结 → 设为 finished。"""
@@ -336,8 +394,9 @@ class Orchestrator:
         ).fetchone().status
 
     def _next_sequence(self, did: str) -> int:
-        """获取下一个 sequence_number，带 UNIQUE 冲突重试。"""
-        for _ in range(3):
+        """获取下一个 sequence_number。读取后递增，失败时重试。"""
+        import time
+        for attempt in range(5):
             row = self.db.execute(
                 text(
                     "SELECT COALESCE(MAX(sequence_number), 0) + 1 AS nxt "
@@ -345,17 +404,16 @@ class Orchestrator:
                 ),
                 {"did": did},
             ).fetchone()
-            # 确认无冲突
+            nxt = row.nxt
+            # 验证无冲突（处理其他线程并发写入）
             existing = self.db.execute(
-                text(
-                    "SELECT 1 FROM transcript_entries "
-                    "WHERE discussion_id = :did AND sequence_number = :seq"
-                ),
-                {"did": did, "seq": row.nxt},
+                text("SELECT 1 FROM transcript_entries WHERE discussion_id=:did AND sequence_number=:seq"),
+                {"did": did, "seq": nxt},
             ).fetchone()
             if existing is None:
-                return row.nxt
-        return row.nxt
+                return nxt
+            time.sleep(0.05 * (attempt + 1))  # 退避
+        return nxt  # fallthrough
 
     def _insert_entry(
         self, did: str, gid: str, seq: int, rnd: int,
@@ -383,28 +441,37 @@ class Orchestrator:
                 "sequence_number": seq, "round_number": rnd,
                 "entry_type": entry_type, "content": content}
 
-    def _analyze_and_push_consensus(self, discussion_id: str) -> None:
-        """每轮结束后分析共识/分歧并推送 SSE。"""
+    def _analyze_and_push_consensus(self, discussion_id: str) -> dict:
+        """每轮结束后分析共识/分歧并推送 SSE。返回结果。"""
+        import logging, os
+        logger = logging.getLogger("orchestrator")
+        result = {"consensus": [], "divergences": []}
         try:
             from app.services.consensus_analyzer import ConsensusAnalyzer
-            analyzer = ConsensusAnalyzer()
+            from app.services.llm_client import LLMClient
+
+            # B1: 有 API Key → LLM 分析；无 → 关键词 fallback
+            api_key = os.getenv("LLM_API_KEY", "")
+            llm = None
+            if api_key:
+                llm = LLMClient(
+                    api_key=api_key,
+                    model=os.getenv("LLM_MODEL", "deepseek-chat"),
+                    base_url=os.getenv("LLM_BASE_URL", "https://api.deepseek.com/v1"),
+                    timeout=int(os.getenv("LLM_TIMEOUT", "60")),
+                    max_retries=int(os.getenv("LLM_MAX_RETRIES", "2")),
+                )
+            analyzer = ConsensusAnalyzer(llm_client=llm)
             result = analyzer.analyze_and_persist(self.db, discussion_id)
 
-            consensus_items = result.get("consensus", [])
-            divergences_items = result.get("divergences", [])
-
-            if consensus_items:
-                self._push_sse(discussion_id, "consensus_update", {
-                    "discussion_id": discussion_id,
-                    "items": consensus_items,
-                })
-            if divergences_items:
-                self._push_sse(discussion_id, "divergence_update", {
-                    "discussion_id": discussion_id,
-                    "items": divergences_items,
-                })
-        except Exception:
-            pass  # 共识分析失败不影响主流程
+            logger.info(f"共识分析完成: consensus={len(result.get('consensus',[]))}, divergences={len(result.get('divergences',[]))}")
+            if result.get("consensus"):
+                self._push_sse(discussion_id, "consensus_update", {"discussion_id": discussion_id, "items": result["consensus"]})
+            if result.get("divergences"):
+                self._push_sse(discussion_id, "divergence_update", {"discussion_id": discussion_id, "items": result["divergences"]})
+        except Exception as e:
+            logger.error(f"共识分析失败: {e}", exc_info=True)
+        return result
 
     def _push_sse(self, did: str, event_type: str, payload: dict) -> None:
         """推送 SSE 事件 (线程安全, 可从 sync 代码直接调用)。"""

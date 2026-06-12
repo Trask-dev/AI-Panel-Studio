@@ -200,6 +200,19 @@ export const useDiscussionStore = create((set, get) => ({
   },
 
   // -----------------------------------------------------------------------
+  // 异步操作状态 (全局反馈)
+  // -----------------------------------------------------------------------
+  asyncStatus: { type: "idle", message: "", startedAt: null },
+
+  setAsyncStatus(type, message) {
+    set({ asyncStatus: { type, message, startedAt: Date.now() } });
+  },
+
+  clearAsyncStatus() {
+    set({ asyncStatus: { type: "idle", message: "", startedAt: null } });
+  },
+
+  // -----------------------------------------------------------------------
   // Reset
   // -----------------------------------------------------------------------
   reset() {

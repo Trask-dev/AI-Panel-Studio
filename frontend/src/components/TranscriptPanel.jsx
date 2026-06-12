@@ -7,9 +7,16 @@
  *   streamingId:  string|null (当前流式中的 entry id)
  */
 
-import React from "react";
+import React, { useEffect, useRef } from "react";
 
 export function TranscriptPanel({ messages = [], guests = [], streamingId = null }) {
+  const bottomRef = useRef(null);
+
+  // 新消息到达时自动滚动到底部
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages.length, messages[messages.length - 1]?.content]);
+
   if (messages.length === 0) {
     return (
       <div className="transcript-panel" data-testid="transcript-panel">
@@ -44,9 +51,17 @@ export function TranscriptPanel({ messages = [], guests = [], streamingId = null
           </React.Fragment>
         );
       })}
+      <div ref={bottomRef} />
     </div>
   );
 }
+
+const ENTRY_TYPE_CN = {
+  opening_statement: "🎤 开场白", position_statement: "🗣️ 立场陈述",
+  speech: "💬 发言", interjection: "⚡ 插话", rebuttal: "↩️ 反驳",
+  supplement: "➕ 补充", question: "❓ 提问", answer: "✅ 回答",
+  closing_statement: "🏁 总结", host_summary: "📋 主持总结",
+};
 
 function TranscriptEntry({ message, isStreaming, color }) {
   return (
@@ -67,7 +82,9 @@ function TranscriptEntry({ message, isStreaming, color }) {
           {message.guest_title && (
             <span className="entry-role">{message.guest_title}</span>
           )}
-          <span className="entry-type-label">{message.entry_type}</span>
+          <span className="entry-type-label">
+            {ENTRY_TYPE_CN[message.entry_type] || message.entry_type}
+          </span>
           {isStreaming && (
             <span className="streaming-badge" data-testid="streaming-badge">
               正在发言

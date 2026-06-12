@@ -111,8 +111,8 @@ def _make_llm_client():
         api_key=api_key,
         model=os.getenv("LLM_MODEL", "deepseek-chat"),
         base_url=os.getenv("LLM_BASE_URL", "https://api.deepseek.com/v1"),
-        timeout=int(os.getenv("LLM_TIMEOUT", "30")),
-        max_retries=int(os.getenv("LLM_MAX_RETRIES", "1")),
+        timeout=int(os.getenv("LLM_TIMEOUT", "60")),          # 发言生成可能较慢
+        max_retries=int(os.getenv("LLM_MAX_RETRIES", "2")),   # 限流/超时后多重试1次
     )
 
 
@@ -325,12 +325,11 @@ def advance_round(
     调用时机: /start 之后, /end 之前。
     """
     try:
-        orch.run_round(discussion_id)
+        result = orch.run_round(discussion_id)
     except ValueError as exc:
         raise HTTPException(409, {"code": "CONFLICT", "message": str(exc)})
     db.commit()
 
-    # 查询当前轮次和状态
     disc = db.execute(
         text("SELECT round_count, status FROM discussions WHERE id = :did"),
         {"did": discussion_id},
@@ -340,6 +339,8 @@ def advance_round(
         "discussion_id": discussion_id,
         "round_count": disc.round_count,
         "status": disc.status,
+        "consensus": result.get("consensus", []),
+        "divergences": result.get("divergences", []),
     }
 
 

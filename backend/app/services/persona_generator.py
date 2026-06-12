@@ -152,7 +152,7 @@ class GuestGenerator:
         """
         if not raw_guests:
             # 降级: LLM 未注入时返回 mock 数据
-            return self._fallback_guests()
+            return self._fallback_guests(expert_count)
 
         guests: list[GuestModel] = []
         color_idx = 0
@@ -184,7 +184,7 @@ class GuestGenerator:
     # Private: 降级 (LLM 不可用时)
     # -------------------------------------------------------------------------
 
-    def _fallback_guests(self) -> list[GuestModel]:
+    def _fallback_guests(self, expert_count: int = 3) -> list[GuestModel]:
         """LLM 未注入时的降级 mock 数据。"""
         guests = [
             GuestModel(
@@ -194,7 +194,7 @@ class GuestGenerator:
                 persona_prompt="你是本次讨论的主持人, 负责引导讨论、提问和总结。"
             ),
         ]
-        for i in range(3):
+        for i in range(expert_count):
             guests.append(GuestModel(
                 role="expert", name=f"专家{i+1}", title=f"领域专家{i+1}",
                 stance=f"立场{i+1}", stance_label=f"观点{i+1}",
