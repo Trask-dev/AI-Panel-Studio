@@ -495,11 +495,11 @@ function AnalysisPanel() {
           consensus.map((c, i) => (
             <div className="consensus-card" key={c.id || `c-${i}`} style={{ marginBottom: "var(--space-sm)" }}>
               <div className="consensus-card__header">
-                <span className="consensus-confidence">{Math.round((c.confidence || 0) * 100)}%</span>
+                <span className="consensus-confidence">{Math.round((c.confidence || 0.75) * 100)}%</span>
               </div>
               <p className="consensus-card__content">{c.content}</p>
               <div className="consensus-bar">
-                <div className="consensus-bar__fill" style={{ "--fill": c.confidence || 0 }} />
+                <div className="consensus-bar__fill" style={{ "--fill": c.confidence || 0.75 }} />
               </div>
             </div>
           ))
