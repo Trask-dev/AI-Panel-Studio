@@ -1,0 +1,36 @@
+# =============================================================================
+# Docker Compose — 一键启动后端 + 前端
+# 用法: docker compose up -d
+# =============================================================================
+
+services:
+  # ---- 后端: FastAPI ----
+  backend:
+    build:
+      context: .                    # 构建上下文 = 项目根目录
+      dockerfile: backend/Dockerfile
+    ports:
+      - "8000:8000"                 # 宿主机:容器
+    environment:
+      - LLM_API_KEY=${LLM_API_KEY}   # 从 .env 读取（也可在 .env 里设）
+      - LLM_MODEL=${LLM_MODEL:-deepseek-chat}
+      - LLM_BASE_URL=${LLM_BASE_URL:-https://api.deepseek.com/v1}
+      - DATABASE_URL=sqlite:///app/data/dev.db
+    volumes:
+      - backend_data:/app/data       # 持久化数据库（容器重启不丢失）
+    restart: unless-stopped
+
+  # ---- 前端: React + nginx ----
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    ports:
+      - "5173:80"                   # 浏览器访问 http://localhost:5173
+    depends_on:
+      - backend                      # 等后端先启动
+    restart: unless-stopped
+
+# ---- 数据卷: 数据库文件持久化 ----
+volumes:
+  backend_data:

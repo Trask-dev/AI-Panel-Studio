@@ -2,28 +2,41 @@
 
 > 让任何人都能瞬间召集一支"虚拟智库"，围绕任意议题展开深度碰撞。
 
-## 运行指南
+## 快速开始（Docker）
+
+> 无需安装 Python / Node.js / 任何依赖。只需 Docker。
+
+```bash
+# 1. 克隆项目
+git clone <仓库地址>
+cd AI圆桌讨论
+
+# 2. 配置 API Key
+cp .env.example .env
+# 编辑 .env：LLM_API_KEY=sk-你的真实Key
+
+# 3. 一键启动（首次约 5 分钟，以后 10 秒）
+docker compose up -d
+
+# 4. 打开浏览器
+# http://localhost:5173
+```
+
+## 开发环境运行（不使用 Docker）
 
 ### 环境要求
 - Python 3.11+ / Node.js 18+
-- Deepseek API Key（或兼容 OpenAI 接口的任意 LLM）
+- Deepseek API Key
 
-### 1. 配置
-
-```bash
-cp .env.example .env
-# 编辑 .env，填入你的 LLM_API_KEY
-```
-
-### 2. 启动后端
+### 后端
 
 ```bash
 cd backend
-pip install fastapi uvicorn sqlalchemy python-dotenv httpx pydantic
+pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000
 ```
 
-### 3. 启动前端
+### 前端
 
 ```bash
 cd frontend
@@ -84,12 +97,3 @@ npm run db:seed   # 生成 3 个讨论 + 50+ 条模拟对话
 - [x] 多讨论并行隔离（discussion_id 全链路隔离）
 - [x] 响应式布局（桌面/平板/手机三断点）
 - [x] hidden_cot 安全过滤（多层防御，绝不泄露到前端）
-
-## 后续改进方向
-
-- [ ] 真实视频/音频流模拟（WebRTC）
-- [ ] 讨论录制与回放
-- [ ] 导出为 Markdown/PDF
-- [ ] 用户认证与多租户
-- [ ] LLM 成本统计与 Token 预算控制
-- [ ] Docker 一键部署

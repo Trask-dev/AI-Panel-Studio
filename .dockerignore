@@ -1,0 +1,26 @@
+# Git
+.git
+.gitignore
+
+# 数据库文件（容器内重建）
+*.db
+*.db-wal
+*.db-shm
+
+# Python
+__pycache__
+*.pyc
+.pytest_cache
+.env
+
+# Node
+**/node_modules
+frontend/dist
+frontend/package-lock.json
+
+# IDE
+.idea
+.vscode
+
+# 文档（.sql 和 .yaml 保留，运行时需要）
+docs/*.md
