@@ -25,9 +25,9 @@ class LLMClient:
 
     def __init__(
         self,
-        api_key: str = "",
-        model: str = "deepseek-chat",
-        base_url: str = "https://api.deepseek.com/v1",
+        api_key: str,
+        model: str,
+        base_url: str,
         timeout: float = 30.0,
         max_retries: int = 1,
     ):
